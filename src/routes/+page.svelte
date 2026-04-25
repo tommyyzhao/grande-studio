@@ -7,9 +7,12 @@
 	import GeneratePanel from '$lib/components/generate-panel.svelte';
 	import TransportBar from '$lib/components/transport-bar.svelte';
 	import BlockList from '$lib/components/block-list.svelte';
+	import ArrangementClipCard from '$lib/components/arrangement-clip-card.svelte';
 	import { createAudioEngine } from '$lib/audio-engine/engine';
+	import type { ArrangementClipState } from '$lib/audio-engine/engine';
 	import { createArrangementEngineBridge } from '$lib/stores/arrangement-engine-bridge.svelte';
 	import { arrangementStore } from '$lib/stores/arrangement.svelte';
+	import { createArrangementPersistence } from '$lib/stores/arrangement-persistence.svelte';
 	import { sseStore } from '$lib/stores/sse.svelte';
 	import type { BlockAsset } from '$lib/types';
 
@@ -19,11 +22,46 @@
 	const audioEngine = createAudioEngine();
 	createArrangementEngineBridge(audioEngine, arrangementStore);
 
+	// ─── Arrangement persistence ─────────────────────────────────────────
+	const arrangementPersistence = createArrangementPersistence(arrangementStore);
+
+	// Hydrate arrangement from DB on project load
+	$effect(() => {
+		if (data.project?.id) {
+			arrangementPersistence.hydrate(data.project.id);
+		}
+	});
+
+	// ─── Asset title lookup (for arrangement clip cards) ─────────────────
+	/** Map from assetId → title, populated from initial assets and new blocks */
+	let assetTitles = $state<Map<string, string>>(new Map());
+
+	// Seed from initial assets
+	$effect(() => {
+		const map = new Map<string, string>();
+		for (const asset of data.assets) {
+			map.set(asset.id, asset.title);
+		}
+		assetTitles = map;
+	});
+
+	// ─── Load audio buffers for hydrated arrangement clips ──────────────
+	$effect(() => {
+		const clips = arrangementStore.clips;
+		for (const clip of clips) {
+			if (!audioEngine.hasAsset(clip.assetId)) {
+				audioEngine.loadAsset(clip.assetId, `/api/audio/${clip.assetId}`);
+			}
+		}
+	});
+
 	// ─── SSE connection ──────────────────────────────────────────────────
 	sseStore.connect();
 
 	onDestroy(() => {
 		audioEngine.dispose();
+		arrangementPersistence.flush();
+		arrangementPersistence.dispose();
 		sseStore.disconnect();
 	});
 
@@ -45,6 +83,60 @@
 			errorCode: null
 		};
 		blockList?.addBlock(newBlock);
+
+		// Track the title for arrangement clip cards
+		assetTitles = new Map(assetTitles).set(result.assetId, newBlock.title);
+	}
+
+	// ─── Add to arrangement ─────────────────────────────────────────────
+	let addingToArrangement = $state(false);
+
+	async function handleAddToArrangement(asset: BlockAsset) {
+		if (!data.project?.id || addingToArrangement) return;
+
+		addingToArrangement = true;
+		try {
+			const res = await fetch('/api/arrangement', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ projectId: data.project.id, assetId: asset.id })
+			});
+
+			if (!res.ok) {
+				const err = await res.json().catch(() => ({ message: 'Failed to add clip' }));
+				console.error('Failed to add to arrangement:', err.message);
+				return;
+			}
+
+			const { clip: dbClip } = await res.json();
+
+			// Convert DB row to ArrangementClipState
+			const clipState: ArrangementClipState = {
+				clipId: dbClip.id,
+				assetId: dbClip.assetId,
+				startTimeSec: Number(dbClip.startTimeSec) || 0,
+				trimStartSec: Number(dbClip.trimStartSec) || 0,
+				trimEndSec: dbClip.trimEndSec != null ? Number(dbClip.trimEndSec) : null,
+				clipDurationSec: Number(dbClip.clipDurationSec),
+				gainDb: Number(dbClip.gainDb) || 0,
+				muted: Boolean(dbClip.muted),
+				soloed: Boolean(dbClip.soloed),
+				layerOrder: Number(dbClip.layerOrder) || 0
+			};
+
+			// Add to arrangement store (engine bridge will sync automatically)
+			arrangementStore.addClip(clipState);
+
+			// Track asset title
+			assetTitles = new Map(assetTitles).set(asset.id, asset.title);
+
+			// Load audio buffer in engine if not already loaded
+			if (!audioEngine.hasAsset(asset.id)) {
+				audioEngine.loadAsset(asset.id, `/api/audio/${asset.id}`);
+			}
+		} finally {
+			addingToArrangement = false;
+		}
 	}
 
 	// ─── Auth state ──────────────────────────────────────────────────────
@@ -170,12 +262,26 @@
 					bind:this={blockList}
 					initialAssets={data.assets}
 					engine={audioEngine}
+					onAddToArrangement={handleAddToArrangement}
 				/>
 			</section>
 
 			<!-- Arrangement Area -->
 			<section class="flex-1 px-4 py-4">
-				<p class="text-muted-foreground text-sm">Arrangement area will appear here.</p>
+				<div class="flex flex-col gap-3">
+					{#if arrangementStore.clipCount === 0}
+						<p class="text-muted-foreground py-8 text-center text-sm">
+							No clips in arrangement. Use the <strong>+</strong> button on a ready block to add it here.
+						</p>
+					{:else}
+						{#each arrangementStore.clips as clip (clip.clipId)}
+							<ArrangementClipCard
+								{clip}
+								title={assetTitles.get(clip.assetId) ?? 'Untitled'}
+							/>
+						{/each}
+					{/if}
+				</div>
 			</section>
 		</div>
 	</main>

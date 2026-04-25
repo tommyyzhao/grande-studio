@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { createLocalDb, createNeonDb } from '$lib/server/db';
-import { arrangementClips } from '$lib/server/db/schema';
+import { arrangementClips, audioAssets } from '$lib/server/db/schema';
 import { withRLS } from '$lib/server/db/rls';
 import { eq, and, isNull } from 'drizzle-orm';
 
@@ -35,6 +35,88 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 	});
 
 	return json({ clips });
+};
+
+/**
+ * POST /api/arrangement
+ * Create a new arrangement clip for a ready asset.
+ * Body: { projectId, assetId }
+ * Returns: { clip } with the created clip row.
+ */
+export const POST: RequestHandler = async ({ request, locals }) => {
+	if (!locals.user) {
+		error(401, { message: 'Authentication required.' });
+	}
+
+	let body: Record<string, unknown>;
+	try {
+		body = await request.json();
+	} catch {
+		error(400, { message: 'Invalid JSON request body.' });
+	}
+
+	const { projectId, assetId } = body;
+	if (!projectId || typeof projectId !== 'string') {
+		error(400, { message: 'Missing required field: projectId' });
+	}
+	if (!assetId || typeof assetId !== 'string') {
+		error(400, { message: 'Missing required field: assetId' });
+	}
+
+	const db = getDb();
+
+	const clip = await withRLS(db, locals.user.id, async (tx) => {
+		// Fetch the source asset to get duration
+		const [asset] = await tx
+			.select({ durationSec: audioAssets.durationSec, status: audioAssets.status })
+			.from(audioAssets)
+			.where(eq(audioAssets.id, assetId))
+			.limit(1);
+
+		if (!asset) {
+			error(404, { message: 'Asset not found.' });
+		}
+		if (asset.status !== 'ready') {
+			error(400, { message: 'Asset must be in ready state to add to arrangement.' });
+		}
+
+		const clipDuration = asset.durationSec ? String(asset.durationSec) : '0';
+
+		// Get current max layer order for this project
+		const existingClips = await tx
+			.select({ layerOrder: arrangementClips.layerOrder })
+			.from(arrangementClips)
+			.where(
+				and(eq(arrangementClips.projectId, projectId), isNull(arrangementClips.deletedAt))
+			)
+			.orderBy(arrangementClips.layerOrder);
+
+		const nextLayerOrder =
+			existingClips.length > 0
+				? existingClips[existingClips.length - 1].layerOrder + 1
+				: 0;
+
+		const [created] = await tx
+			.insert(arrangementClips)
+			.values({
+				projectId,
+				ownerId: locals.user!.id,
+				assetId,
+				startTimeSec: '0',
+				trimStartSec: '0',
+				trimEndSec: null,
+				clipDurationSec: clipDuration,
+				gainDb: '0',
+				muted: false,
+				soloed: false,
+				layerOrder: nextLayerOrder
+			})
+			.returning();
+
+		return created;
+	});
+
+	return json({ clip });
 };
 
 /**

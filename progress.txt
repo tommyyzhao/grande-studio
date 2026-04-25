@@ -3,6 +3,10 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 ---
 
 ## Codebase Patterns
+- POST `/api/arrangement` creates arrangement_clip rows — auto-fetches asset duration and auto-increments layerOrder
+- `createArrangementPersistence(arrangementStore)` wraps the store with debounced DB writes — must call `flush()` and `dispose()` in `onDestroy`
+- `ArrangementClipState` has `assetId` but not title — maintain a separate `Map<assetId, title>` for display
+- Arrangement clip card component at `src/lib/components/arrangement-clip-card.svelte` — expects `clip: ArrangementClipState` and `title: string`
 - Svelte `class:` directive cannot use Tailwind opacity modifiers (e.g. `class:ring-foreground/10={cond}` fails) — use computed class strings with `$derived.by()` instead
 - `BlockAsset` type includes `jobId`, `errorCode`, `lyrics` fields — use `jobId` for SSE tracking and cancel/retry; `errorCode` for error display on failed cards
 - `PendingBlockCard` component at `src/lib/components/pending-block-card.svelte` handles all non-ready states; `BlockCard` at `block-card.svelte` handles ready state — parent conditionally renders based on `asset.status`
@@ -1108,4 +1112,20 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - Left join `generationJobs` on `resultingAssetId` is the way to link assets to their job metadata
   - SSE listener in `$effect` must return the unsubscribe function for proper cleanup
   - `durationSec` from Drizzle is `numeric` type (string) — convert to `Number()` when building `BlockAsset`
+---
+
+## 2026-04-25 - US-046
+- Implemented arrangement clip card component and wired "Add to arrangement" button
+- Files changed:
+  - `src/routes/api/arrangement/+server.ts` — added POST handler to create arrangement_clip rows
+  - `src/lib/components/arrangement-clip-card.svelte` — new component showing clip title, music icon, and duration
+  - `src/routes/+page.svelte` — added arrangement persistence/hydration, handleAddToArrangement handler, arrangement section rendering with clip cards, audio buffer loading for hydrated clips
+  - `prd.json` — marked US-046 as passes: true
+- **Learnings for future iterations:**
+  - POST `/api/arrangement` creates clips by fetching asset duration from audio_assets table and auto-incrementing layerOrder
+  - `arrangementPersistence.hydrate(projectId)` loads clips from DB into store on workspace mount — must call before other arrangement operations
+  - Asset titles for arrangement clips need a separate `Map<assetId, title>` since ArrangementClipState only has assetId, not title
+  - Svelte 5 reactive Map pattern: `assetTitles = new Map(assetTitles).set(id, title)` to trigger reactivity
+  - Audio engine buffers for arrangement clips should be loaded via `$effect` watching `arrangementStore.clips` to handle both hydration and add-to-arrangement flows
+  - `arrangementPersistence.flush()` and `.dispose()` must be called in `onDestroy` to avoid lost debounced writes
 ---
