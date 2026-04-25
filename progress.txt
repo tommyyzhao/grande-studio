@@ -32,6 +32,12 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - `drizzle.config.ts` schema field accepts an array of paths for multiple schema files
 - BetterAuth Svelte client API: `authClient.signUp.email({ email, password, name })` and `authClient.signIn.email({ email, password })` — both return `{ data, error }`
 - shadcn-svelte Card uses namespace import: `import * as Card from '$lib/components/ui/card'`
+- MiniMax adapter factory: `createMiniMaxAdapter(apiKey)` at `src/lib/providers/minimax/adapter.ts` returns `MusicProvider` interface
+- MiniMax API endpoint: `https://api.minimaxi.chat/v1/music_generation`, model: `music-01`
+- MiniMax request fields: `is_instrumental` (bool), `lyrics` (optional), `refer_voice` (source URL for cover), `lyrics_optimization` (bool)
+- Payload builders exported separately from adapter for direct unit testing without fetch mocking
+- Cover/re-style source URLs must be from R2, not provider CDNs — `validateR2SourceUrl()` in adapter.ts enforces this
+- Known provider CDN domains blocked: `cdn.minimax.chat`, `cdn.minimaxi.chat`, `fileserviceupload.minimax.chat`
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -238,4 +244,49 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - Supported structure tags: [Intro], [Verse], [Verse 1], [Verse 2], [Pre-Chorus], [Chorus], [Hook], [Bridge], [Breakdown], [Solo], [Outro]
   - MiniMax lyrics limit constant: `MINIMAX_MAX_LYRICS_LENGTH = 2000`
   - Cover/re-style mode doesn't require lyrics (they're optional), and skips the non-instrumental lyrics check
+---
+
+## 2026-04-24 - US-012
+- Created MiniMax adapter at `src/lib/providers/minimax/adapter.ts` implementing `MusicProvider` interface
+- Exported payload builder functions: `buildTextToMusicPayload`, `buildInstrumentalPayload`, `buildCoverRestylePayload`
+- Defined MiniMax-specific types: `MiniMaxMusicRequest`, `MiniMaxMusicResponse`, `MiniMaxApiError`
+- `generateTextToMusic`: sets `is_instrumental=false`, includes lyrics when provided, passes `lyrics_optimization` flag
+- `generateInstrumental`: sets `is_instrumental=true`, never includes lyrics
+- `generateCoverRestyle`: sets `refer_voice` to source audio URL (full implementation in US-013)
+- API key passed via `createMiniMaxAdapter(apiKey)` factory — never exposed client-side
+- No `any` types anywhere in adapter code
+- `toProviderHandle` maps MiniMax response to typed `ProviderGenerationHandle`
+- Created test file at `src/lib/providers/minimax/adapter.test.ts` with 21 tests covering:
+  - Payload builder formatting for all three generation modes
+  - Lyrics inclusion/omission logic
+  - Lyrics optimizer flag passthrough
+  - Adapter integration with mocked fetch (correct URL, headers, auth, body)
+  - Error handling for HTTP errors and non-zero status codes
+  - Response mapping (supportsStreaming, metadata)
+- All 43 tests pass (22 existing + 21 new), typecheck passes (0 errors)
+- Files changed: src/lib/providers/minimax/adapter.ts, src/lib/providers/minimax/adapter.test.ts
+- **Learnings for future iterations:**
+  - MiniMax Music API endpoint: `https://api.minimaxi.chat/v1/music_generation`, model: `music-01`
+  - MiniMax request uses `is_instrumental` (boolean), `lyrics` (optional string), `refer_voice` (source audio URL for cover)
+  - MiniMax response wraps data in `base_resp` (status_code/status_msg) + `data` (task_id, audio/audio_url) + optional `extra_info`
+  - `base_resp.status_code === 0` means success; non-zero is an error
+  - Use `createMiniMaxAdapter(apiKey)` factory pattern — no class needed, returns `MusicProvider` interface directly
+  - Payload builders are exported separately for testability without mocking fetch
+  - `vi.spyOn(globalThis, 'fetch')` is the cleanest way to mock fetch in vitest
+---
+
+## 2026-04-24 - US-013
+- Completed cover/re-style payload mapping in MiniMax adapter
+- Added `validateR2SourceUrl()` function to enforce source audio comes from R2 storage, not provider CDNs
+- Blocklist covers `cdn.minimax.chat`, `cdn.minimaxi.chat`, `fileserviceupload.minimax.chat`
+- `buildCoverRestylePayload()` now validates source URL before building payload — throws on invalid URLs
+- Added 22 new tests: R2 URL validation (9 tests), expanded cover payload builder tests (9 tests), expanded adapter integration tests for cover mode (6 tests including provider CDN rejection, lyrics handling, error handling, metadata mapping)
+- All 65 tests pass, typecheck passes (0 errors)
+- Files changed: src/lib/providers/minimax/adapter.ts, src/lib/providers/minimax/adapter.test.ts
+- **Learnings for future iterations:**
+  - `validateR2SourceUrl()` at `src/lib/providers/minimax/adapter.ts` rejects known provider CDN domains and requires valid HTTP/HTTPS URLs
+  - Cover/re-style uses the same `/v1/music_generation` endpoint as text-to-music, differentiated by `refer_voice` field
+  - Provider CDN URLs are temporary — only R2 object keys are canonical source references
+  - The validation throws synchronously in `buildCoverRestylePayload`, preventing the API call from being made with invalid source URLs
+  - `http:` URLs are allowed for local development (localhost R2 emulation)
 ---

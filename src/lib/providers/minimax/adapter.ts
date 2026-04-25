@@ -13,6 +13,13 @@ const MINIMAX_API_BASE = 'https://api.minimaxi.chat/v1';
 const MINIMAX_MUSIC_ENDPOINT = `${MINIMAX_API_BASE}/music_generation`;
 const MINIMAX_MODEL = 'music-01';
 
+// Known provider CDN domains — source audio must come from R2, not these
+const PROVIDER_CDN_DOMAINS = [
+	'cdn.minimax.chat',
+	'cdn.minimaxi.chat',
+	'fileserviceupload.minimax.chat'
+] as const;
+
 // ─── MiniMax API Request/Response Types ─────────────────────────────────────
 
 export interface MiniMaxMusicRequest {
@@ -44,6 +51,40 @@ export interface MiniMaxMusicResponse {
 	};
 }
 
+// ─── Source URL Validation ──────────────────────────────────────────────────
+
+/**
+ * Validates that a source audio URL is from R2 storage, not a provider CDN.
+ * Provider URLs are temporary and must never be stored as the canonical audio source.
+ */
+export function validateR2SourceUrl(url: string): { valid: boolean; error?: string } {
+	if (!url || url.trim().length === 0) {
+		return { valid: false, error: 'Source audio URL is required' };
+	}
+
+	let parsed: URL;
+	try {
+		parsed = new URL(url);
+	} catch {
+		return { valid: false, error: 'Source audio URL is not a valid URL' };
+	}
+
+	if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+		return { valid: false, error: 'Source audio URL must use HTTP or HTTPS' };
+	}
+
+	for (const domain of PROVIDER_CDN_DOMAINS) {
+		if (parsed.hostname === domain || parsed.hostname.endsWith(`.${domain}`)) {
+			return {
+				valid: false,
+				error: `Source audio must be from R2 storage, not provider CDN (${parsed.hostname})`
+			};
+		}
+	}
+
+	return { valid: true };
+}
+
 // ─── Payload Builders ───────────────────────────────────────────────────────
 
 export function buildTextToMusicPayload(input: TextToMusicInput): MiniMaxMusicRequest {
@@ -73,6 +114,12 @@ export function buildInstrumentalPayload(input: InstrumentalGenerationInput): Mi
 }
 
 export function buildCoverRestylePayload(input: CoverRestyleInput): MiniMaxMusicRequest {
+	// Validate source URL is from R2, not a provider CDN
+	const urlValidation = validateR2SourceUrl(input.sourceAudioUrl);
+	if (!urlValidation.valid) {
+		throw new Error(`Invalid source audio URL: ${urlValidation.error}`);
+	}
+
 	const payload: MiniMaxMusicRequest = {
 		model: MINIMAX_MODEL,
 		prompt: input.prompt,
