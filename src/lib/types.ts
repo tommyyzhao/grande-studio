@@ -30,3 +30,13 @@ export interface JobStatusEvent {
 	status: JobStatus;
 	errorCode: string | null;
 }
+
+/** SSE audio-chunk event payload for live-listening */
+export interface AudioChunkEvent {
+	jobId: string;
+	assetId: string;
+	chunkIndex: number;
+	/** Base64-encoded audio bytes */
+	data: string;
+	isFinal: boolean;
+}

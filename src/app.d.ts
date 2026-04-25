@@ -1,6 +1,7 @@
 // See https://svelte.dev/docs/kit/types#app.d.ts
 // for information about these interfaces
 import type { R2BucketLike } from '$lib/services/r2-storage';
+import type { KVNamespaceLike } from '$lib/services/live-chunks';
 
 /** Minimal Cloudflare Queue producer interface (avoids @cloudflare/workers-types dependency) */
 interface QueueLike {
@@ -34,6 +35,7 @@ declare global {
 			env: {
 				AUDIO_BUCKET: R2BucketLike;
 				GENERATION_QUEUE: QueueLike;
+				LIVE_KV: KVNamespaceLike;
 			};
 			context: {
 				waitUntil(promise: Promise<unknown>): void;

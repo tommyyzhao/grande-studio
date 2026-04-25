@@ -4,6 +4,7 @@ import type { MusicProvider } from '$lib/providers/types';
 import type { R2StorageService } from '$lib/services/r2-storage';
 import type { R2BucketLike } from '$lib/services/r2-storage';
 import type { QuotaService } from '$lib/services/quota';
+import type { LiveChunkPublisher, KVNamespaceLike } from '$lib/services/live-chunks';
 
 // ─── Queue Message ────────────────────────────────────────────────────────────
 
@@ -45,6 +46,7 @@ export interface WorkflowEnv {
 	R2_SIGNING_SECRET?: string;
 	BETTER_AUTH_URL?: string;
 	AUDIO_BUCKET?: R2BucketLike;
+	LIVE_KV?: KVNamespaceLike;
 }
 
 // ─── Workflow Dependencies ────────────────────────────────────────────────────
@@ -55,6 +57,8 @@ export interface WorkflowDeps {
 	provider: MusicProvider;
 	r2: R2StorageService;
 	quota: QuotaService;
+	/** Optional live chunk publisher for real-time audio preview (best-effort) */
+	liveChunks?: LiveChunkPublisher;
 }
 
 // ─── Workflow Result ──────────────────────────────────────────────────────────

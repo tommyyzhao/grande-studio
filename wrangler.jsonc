@@ -3,6 +3,12 @@
 	"name": "grande-studio",
 	"compatibility_date": "2025-04-01",
 	"pages_build_output_dir": ".svelte-kit/cloudflare",
+	"kv_namespaces": [
+		{
+			"binding": "LIVE_KV",
+			"id": "grande-studio-live-chunks"
+		}
+	],
 	"r2_buckets": [
 		{
 			"binding": "AUDIO_BUCKET",

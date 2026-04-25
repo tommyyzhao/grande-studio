@@ -2,6 +2,7 @@ import { createLocalDb, createNeonDb } from '$lib/server/db';
 import { createMiniMaxAdapter } from '$lib/providers/minimax/adapter';
 import { createR2StorageService } from '$lib/services/r2-storage';
 import { createQuotaService, createDrizzleQuotaRepository } from '$lib/services/quota';
+import { createLiveChunkPublisher } from '$lib/services/live-chunks';
 import { runGenerationWorkflow } from './generation-workflow';
 import type { GenerationQueueMessage, MessageBatchLike, WorkflowDeps, WorkflowEnv } from './types';
 
@@ -30,7 +31,10 @@ function buildWorkflowDeps(env?: WorkflowEnv): WorkflowDeps {
 	const quotaRepo = createDrizzleQuotaRepository(db);
 	const quota = createQuotaService(quotaRepo);
 
-	return { db, provider, r2, quota };
+	// Live chunk publisher is optional — best-effort live-listening
+	const liveChunks = env?.LIVE_KV ? createLiveChunkPublisher(env.LIVE_KV) : undefined;
+
+	return { db, provider, r2, quota, liveChunks };
 }
 
 /**

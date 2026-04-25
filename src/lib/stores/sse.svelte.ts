@@ -8,7 +8,7 @@
  * - Cleanup on disconnect
  * - Svelte 5 runes for reactive status tracking
  */
-import type { JobStatus, JobStatusEvent } from '$lib/types';
+import type { JobStatus, JobStatusEvent, AudioChunkEvent } from '$lib/types';
 
 // ─── Backoff constants ──────────────────────────────────────────────────────
 const INITIAL_RETRY_MS = 1000;
@@ -25,7 +25,19 @@ export interface JobState {
 	updatedAt: number; // timestamp ms
 }
 
+/** Accumulated live audio chunks for a job */
+export interface LiveAudioState {
+	assetId: string;
+	/** Base64-encoded audio chunks in order */
+	chunks: string[];
+	/** Whether all chunks have been received */
+	complete: boolean;
+	/** Timestamp of last chunk received */
+	lastChunkAt: number;
+}
+
 type StatusListener = (event: JobStatusEvent) => void;
+type ChunkListener = (event: AudioChunkEvent) => void;
 
 // ─── SSE Store ──────────────────────────────────────────────────────────────
 
@@ -39,12 +51,49 @@ export function createSSEStore() {
 	let connected = $state(false);
 	let reconnecting = $state(false);
 
+	// Reactive state: live audio chunks per jobId
+	let liveAudio = $state<Map<string, LiveAudioState>>(new Map());
+
 	// Internal non-reactive state
 	let eventSource: EventSource | null = null;
 	let retryMs = INITIAL_RETRY_MS;
 	let retryTimer: ReturnType<typeof setTimeout> | null = null;
 	let intentionalClose = false;
 	const listeners = new Set<StatusListener>();
+	const chunkListeners = new Set<ChunkListener>();
+
+	function handleChunkEvent(event: MessageEvent) {
+		try {
+			const data: AudioChunkEvent = JSON.parse(event.data);
+			const next = new Map(liveAudio);
+			const existing = next.get(data.jobId);
+
+			if (existing) {
+				// Ensure chunks are placed at the correct index
+				existing.chunks[data.chunkIndex] = data.data;
+				existing.complete = data.isFinal;
+				existing.lastChunkAt = Date.now();
+			} else {
+				const chunks: string[] = [];
+				chunks[data.chunkIndex] = data.data;
+				next.set(data.jobId, {
+					assetId: data.assetId,
+					chunks,
+					complete: data.isFinal,
+					lastChunkAt: Date.now()
+				});
+			}
+
+			liveAudio = next;
+
+			// Notify chunk listeners
+			for (const listener of chunkListeners) {
+				listener(data);
+			}
+		} catch (err) {
+			console.error('[SSE] Failed to parse audio-chunk event:', err);
+		}
+	}
 
 	function handleEvent(event: MessageEvent) {
 		try {
@@ -104,6 +153,9 @@ export function createSSEStore() {
 
 		// Listen for named 'job-status' events (not generic 'message')
 		eventSource.addEventListener('job-status', handleEvent);
+
+		// Listen for named 'audio-chunk' events for live-listening
+		eventSource.addEventListener('audio-chunk', handleChunkEvent);
 
 		eventSource.addEventListener('error', () => {
 			connected = false;
@@ -179,6 +231,35 @@ export function createSSEStore() {
 		return () => listeners.delete(listener);
 	}
 
+	/** Subscribe to audio chunk events. Returns an unsubscribe function. */
+	function onAudioChunk(listener: ChunkListener): () => void {
+		chunkListeners.add(listener);
+		return () => chunkListeners.delete(listener);
+	}
+
+	/** Get accumulated live audio chunks for a job */
+	function getLiveAudio(jobId: string): LiveAudioState | undefined {
+		return liveAudio.get(jobId);
+	}
+
+	/** Check if a job is currently receiving live audio chunks */
+	function isLiveListening(jobId: string): boolean {
+		const state = liveAudio.get(jobId);
+		if (!state || state.complete) return false;
+		// Consider "live" if we received a chunk in the last 10 seconds
+		return Date.now() - state.lastChunkAt < 10_000;
+	}
+
+	/** Check if an asset's associated job is live-listening (by assetId) */
+	function isAssetLive(assetId: string): boolean {
+		for (const [jobId, state] of liveAudio) {
+			if (state.assetId === assetId) {
+				return isLiveListening(jobId);
+			}
+		}
+		return false;
+	}
+
 	return {
 		/** Connect to the SSE endpoint. Call from workspace onMount. */
 		connect,
@@ -192,6 +273,14 @@ export function createSSEStore() {
 		setJobStatus,
 		/** Subscribe to status change events */
 		onStatusChange,
+		/** Subscribe to audio chunk events for live-listening */
+		onAudioChunk,
+		/** Get accumulated live audio chunks for a job */
+		getLiveAudio,
+		/** Check if a job is currently receiving live audio (by jobId) */
+		isLiveListening,
+		/** Check if an asset has an active live-listening stream (by assetId) */
+		isAssetLive,
 		/** Reactive: all tracked jobs */
 		get jobs() {
 			return jobs;
@@ -203,6 +292,10 @@ export function createSSEStore() {
 		/** Reactive: whether we're waiting to reconnect */
 		get reconnecting() {
 			return reconnecting;
+		},
+		/** Reactive: all live audio state */
+		get liveAudio() {
+			return liveAudio;
 		}
 	};
 }

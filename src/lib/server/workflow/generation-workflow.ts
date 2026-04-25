@@ -381,6 +381,15 @@ export async function runGenerationWorkflow(
 				receivingAudioTransitioned = true;
 			}
 			chunks.push(chunk);
+
+			// Best-effort: forward chunk to live-listening KV channel
+			if (deps.liveChunks) {
+				try {
+					await deps.liveChunks.publishChunk(jobId, chunk.sequence, chunk.data, chunk.isFinal);
+				} catch (liveErr) {
+					console.warn(`[workflow] Live chunk publish failed for job=${jobId} chunk=${chunk.sequence}:`, liveErr);
+				}
+			}
 		}
 	} catch (error) {
 		// Stream broke before a valid file was fully received
@@ -400,6 +409,15 @@ export async function runGenerationWorkflow(
 			error instanceof Error ? error.message : 'Stream broke before audio was fully received',
 			quotaReservationId
 		);
+	}
+
+	// Best-effort: mark live stream as complete
+	if (deps.liveChunks) {
+		try {
+			await deps.liveChunks.endStream(jobId);
+		} catch (liveErr) {
+			console.warn(`[workflow] Live stream end failed for job=${jobId}:`, liveErr);
+		}
 	}
 
 	// Assemble audio bytes
