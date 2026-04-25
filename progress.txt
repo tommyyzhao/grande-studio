@@ -3,6 +3,8 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 ---
 
 ## Codebase Patterns
+- Take edges API at `src/routes/api/take-edges/+server.ts`: POST creates edges, GET returns variation counts per parent asset — uses `TakeEdgeService` from `src/lib/services/take-edges.ts`
+- GeneratePanel exports `prefill(prompt, lyrics, parentId)` — use `bind:this={generatePanel}` to prefill from parent components
 - POST `/api/arrangement` creates arrangement_clip rows — auto-fetches asset duration and auto-increments layerOrder
 - `createArrangementPersistence(arrangementStore)` wraps the store with debounced DB writes — must call `flush()` and `dispose()` in `onDestroy`
 - `ArrangementClipState` has `assetId` but not title — maintain a separate `Map<assetId, title>` for display
@@ -1236,4 +1238,20 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - Start offset, trim, and clip duration changes update engine internal state but do NOT reschedule active source nodes — changes take effect on next `play()` call (standard DAW behavior)
   - `layerOrder` is UI-only display ordering and has no engine dispatch — the bridge correctly ignores it
   - Extracting `$effect` body logic into a pure function makes it testable without Svelte's reactive runtime
+---
+
+## 2026-04-25 - US-054
+- What was implemented: Wired "Create variation" button on ready block cards to prefill the generate panel with the parent block's prompt and lyrics, then create a take_edge (branch_type='prompt_variation') after the child asset is generated. Added variation count badges on block cards.
+- Files changed:
+  - `src/routes/api/take-edges/+server.ts` — New API endpoint: POST creates take edges via TakeEdgeService with validation; GET returns variation counts (children per parent) for a project via SQL aggregation.
+  - `src/lib/components/generate-panel.svelte` — Added exported `prefill(prompt, lyrics, parentId)` function to set form state externally. Added `parentAssetId` tracking with blue variation banner and cancel button. Extended `onGenerated` callback to include `parentAssetId`.
+  - `src/routes/+page.svelte` — Added `generatePanel` ref, `variationCounts` state (Map), `fetchVariationCounts()` on project load, `handleCreateVariation()` handler that calls `generatePanel.prefill()`, `createTakeEdge()` function called from `handleGenerated` when parentAssetId is present. Passed `onCreateVariation` and `variationCounts` to BlockList.
+  - `src/lib/components/block-list.svelte` — Added `variationCounts` prop (Map<string, number>), passed as `variationCount` per-asset to BlockCard.
+  - `src/lib/components/block-card.svelte` — Added `variationCount` prop (number), displays "{N} variation(s)" badge in blue when count > 0, next to provider badge.
+- **Learnings for future iterations:**
+  - GeneratePanel exports `prefill()` for imperative external control — use `bind:this={generatePanel}` to get the ref
+  - Take edge creation is fire-and-forget after generation (non-blocking) — failure just means the edge isn't tracked
+  - Variation counts are loaded via GET /api/take-edges?projectId=... returning `{ counts: Record<parentAssetId, number> }`
+  - Variation counts updated optimistically in the client Map after successful edge creation
+  - TakeEdgeService's `createDrizzleTakeEdgeRepository` works with the raw db instance (not RLS-wrapped), but the API endpoint uses `withRLS` for the GET query
 ---
