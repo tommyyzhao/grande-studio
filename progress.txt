@@ -1,0 +1,35 @@
+# Ralph Progress Log
+Started: Fri Apr 24 17:37:24 PDT 2026
+---
+
+## Codebase Patterns
+- Use `npx shadcn-svelte add <component> --no-deps --overwrite` and pipe `echo "y"` for confirmation to add shadcn-svelte components
+- shadcn-svelte v1.2.7 presets: nova, vega, maia, lyra, mira, luma (not "default"/"new-york")
+- `WithElementRef` type must be exported from `$lib/utils.ts` for shadcn-svelte components
+- Tailwind CSS v4 uses `@tailwindcss/vite` plugin (not PostCSS) and `@theme inline` blocks for design tokens
+- shadcn-svelte CSS uses oklch color format in `:root` / `.dark` selectors
+- `tw-animate-css` is required for shadcn-svelte animations
+- Project uses `@sveltejs/adapter-cloudflare` with `pages_build_output_dir: ".svelte-kit/cloudflare"` in wrangler.jsonc
+
+## 2026-04-24 18:07 - US-001
+- Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
+- Files changed:
+  - package.json (created with all dependencies)
+  - svelte.config.js (Cloudflare adapter, runes mode)
+  - vite.config.ts (Tailwind CSS v4 vite plugin)
+  - tsconfig.json (TypeScript strict config)
+  - wrangler.jsonc (Cloudflare Pages config)
+  - components.json (shadcn-svelte config)
+  - src/app.css (Tailwind + shadcn-svelte theme with oklch neutral palette)
+  - src/app.html, src/app.d.ts (SvelteKit app shell)
+  - src/lib/utils.ts (cn helper + WithElementRef type)
+  - src/lib/components/ui/button/ (shadcn-svelte button component)
+  - src/routes/+layout.svelte, +page.svelte (root layout with CSS import)
+  - .gitignore, .npmrc, static/favicon.svg
+- **Learnings for future iterations:**
+  - shadcn-svelte CLI is stubbornly interactive; use `echo "y" | npx shadcn-svelte add ...` for automation
+  - The `--no-deps` flag prevents auto-installing peer deps (useful when managing deps manually)
+  - shadcn-svelte components may import types not in the default utils.ts (e.g., WithElementRef)
+  - Dev server starts on port 5173 by default
+  - Typecheck: `npm run check` (runs svelte-kit sync + svelte-check)
+---

@@ -1,0 +1,1182 @@
+{
+  "project": "V1 Minimax Web Studio",
+  "branchName": "ralph/v1-minimax-web-studio",
+  "description": "Open-source, mobile-first AI music sketchpad. Generate music with MiniMax, stream final audio chunks, stack blocks in a vertical arrangement, perform non-destructive edits, branch variations via take DAG, and export rough mixes.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Scaffold SvelteKit 2 project with Svelte 5, Tailwind CSS v4, shadcn-svelte, and Cloudflare adapter",
+      "description": "As a developer, I need the base project scaffolded with pinned dependencies so that all subsequent stories have a working foundation.",
+      "acceptanceCriteria": [
+        "SvelteKit 2 project created with Svelte 5 in the repo root",
+        "Tailwind CSS v4 installed and configured",
+        "shadcn-svelte (v2+) installed and initialized",
+        "Cloudflare Pages adapter configured in svelte.config.js",
+        "wrangler.jsonc created with basic Pages configuration",
+        "All dependency versions pinned to exact minor versions in package.json",
+        "Dev server starts successfully with `npm run dev`",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "This is the foundation. Every other story depends on this."
+    },
+    {
+      "id": "US-002",
+      "title": "Install and configure Drizzle ORM with Postgres connection",
+      "description": "As a developer, I need Drizzle ORM connected to Postgres so that database access is available for schema and queries.",
+      "acceptanceCriteria": [
+        "drizzle-orm and drizzle-kit installed",
+        "postgres (pg) driver installed for local dev; @neondatabase/serverless installed for production",
+        "drizzle.config.ts reads DATABASE_URL from env",
+        "Database client module created at /src/lib/server/db.ts (or similar) exporting a typed Drizzle instance",
+        ".env created with DATABASE_URL=postgresql://localhost:5432/grande_studio for local development",
+        ".env.example includes DATABASE_URL placeholder",
+        "Local Postgres database 'grande_studio' created if it does not exist (via createdb or equivalent)",
+        "Connection works with `npx drizzle-kit push` or `npx drizzle-kit generate` (no errors against local Postgres)",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "Local dev uses local Postgres. Neon is the production target only."
+    },
+    {
+      "id": "US-003",
+      "title": "Migration-zero: projects and audio_assets tables",
+      "description": "As a developer, I need the projects and audio_assets tables created so that the core data model exists.",
+      "acceptanceCriteria": [
+        "Drizzle schema file defines projects table: id (uuid PK), owner_id (uuid not null), title (text not null), created_at, updated_at, deleted_at",
+        "Drizzle schema file defines audio_assets table: id (uuid PK), project_id (FK to projects), owner_id, source_type ('generated'|'uploaded'|'imported'|'rendered_export'), provider ('minimax'|'elevenlabs'|'stability'|'local_upload'|'browser_render'), provider_model (nullable), provider_job_id (nullable), title, prompt (nullable), lyrics (nullable), structure_tags_json (jsonb nullable), input_asset_ids_json (jsonb nullable), r2_object_key (nullable), duration_sec (numeric nullable), format (nullable), sample_rate (int nullable), bit_depth (int nullable), status ('created'|'queued'|'generating'|'receiving_audio'|'persisting'|'ready'|'failed'|'deleted'), error_json (jsonb nullable), created_at, updated_at, deleted_at",
+        "Indexes on audio_assets: owner_id, project_id",
+        "Migration generated and runs successfully",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Migration-zero: arrangement_clips and take_edges tables",
+      "description": "As a developer, I need the arrangement and take relationship tables so that clips and variation branching can be stored.",
+      "acceptanceCriteria": [
+        "arrangement_clips table: id (uuid PK), project_id (FK), owner_id, asset_id (FK to audio_assets), start_time_sec (numeric default 0), trim_start_sec (numeric default 0), trim_end_sec (numeric nullable), clip_duration_sec (numeric not null), gain_db (numeric default 0), muted (boolean default false), soloed (boolean default false), layer_order (int default 0), created_at, updated_at, deleted_at",
+        "take_edges table: id (uuid PK), project_id (FK), owner_id, parent_asset_id (FK), child_asset_id (FK), branch_type ('prompt_variation'|'lyric_edit'|'instrumental_variant'|'cover_restyle'|'reference_from_asset'|'manual_duplicate'|'other'), branch_prompt (nullable), created_at, deleted_at",
+        "take_edges has CHECK constraint: parent_asset_id <> child_asset_id",
+        "Indexes on arrangement_clips: owner_id, project_id, asset_id",
+        "Indexes on take_edges: owner_id, project_id, parent_asset_id, child_asset_id",
+        "Migration generated and runs successfully",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "No loop_enabled boolean — looping is implicit when clip_duration_sec > trimmed audio length. No pan column — deferred to post-V1."
+    },
+    {
+      "id": "US-005",
+      "title": "Migration-zero: generation_jobs, quota_reservations, export_jobs, and provider_events tables",
+      "description": "As a developer, I need the job tracking, quota, export, and provider event tables so that generation lifecycle is fully modeled.",
+      "acceptanceCriteria": [
+        "generation_jobs table: id (uuid PK), project_id (FK), owner_id, provider, provider_model, job_type ('text_to_music'|'instrumental'|'cover_restyle'), status ('created'|'queued'|'generating'|'receiving_audio'|'persisting'|'succeeded'|'failed'|'cancelled'), request_json (jsonb not null), response_json (jsonb nullable), error_json (jsonb nullable), error_code (text nullable), quota_reservation_id (uuid nullable), resulting_asset_id (FK nullable), idempotency_key (text not null), created_at, updated_at",
+        "quota_reservations table: id (uuid PK), owner_id, generation_job_id (FK nullable), idempotency_key (text not null), units_reserved (int not null), status ('reserved'|'committed'|'released'|'expired'), expires_at (timestamptz not null), created_at, updated_at",
+        "export_jobs table: id (uuid PK), project_id (FK), owner_id, export_type ('block_source'|'rough_mixdown'), status ('created'|'rendering_client'|'uploading'|'ready'|'failed'), snapshot_version (int default 1), arrangement_snapshot_json (jsonb nullable), r2_object_key (nullable), error_json (jsonb nullable), created_at, updated_at",
+        "provider_events table: id (uuid PK), owner_id, generation_job_id (FK nullable), provider, event_type, payload_json (jsonb nullable), created_at",
+        "Indexes on generation_jobs: owner_id, project_id, resulting_asset_id, idempotency_key",
+        "Migration generated and runs successfully",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Enable RLS and create ownership policies for all user-owned tables",
+      "description": "As a developer, I need Postgres RLS enforcing owner isolation so that users can never access other users' data.",
+      "acceptanceCriteria": [
+        "RLS is enabled on: projects, audio_assets, arrangement_clips, take_edges, generation_jobs, quota_reservations, export_jobs, provider_events",
+        "Each table has a SELECT/INSERT/UPDATE/DELETE policy referencing current_setting('app.user_id', true)",
+        "A helper function or SQL snippet sets SET LOCAL app.user_id before every data access in SvelteKit endpoints",
+        "Migrations for RLS policies run successfully",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "Application-layer checks are required in addition to RLS, but RLS is the enforcement backstop."
+    },
+    {
+      "id": "US-007",
+      "title": "Install and configure BetterAuth with email/password provider",
+      "description": "As a developer, I need authentication infrastructure so that users can create accounts and maintain sessions.",
+      "acceptanceCriteria": [
+        "better-auth package installed",
+        "Auth server configured at /src/lib/server/auth.ts with email/password provider",
+        "BetterAuth Drizzle adapter configured to use the local Postgres database",
+        "Auth API route handler created (e.g., /src/routes/api/auth/[...all]/+server.ts)",
+        "Auth client created at /src/lib/auth-client.ts",
+        "BETTER_AUTH_SECRET auto-generated and added to .env (e.g., via openssl rand -base64 32)",
+        "BETTER_AUTH_URL set to http://localhost:5173 in .env",
+        "Both vars added to .env.example as placeholders",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "Agent should auto-generate the secret and set the local URL. User does not need to provide these."
+    },
+    {
+      "id": "US-008",
+      "title": "Create sign-up and sign-in pages",
+      "description": "As a user, I want to create an account and sign in so that my work is saved.",
+      "acceptanceCriteria": [
+        "Sign-up page at /signup with email and password fields and submit button",
+        "Sign-in page at /signin with email and password fields and submit button",
+        "Form validation: email format, password minimum length",
+        "Error messages displayed for invalid credentials or existing email",
+        "Successful sign-up redirects to workspace",
+        "Successful sign-in redirects to workspace",
+        "Pages use shadcn-svelte form components",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Add auth session middleware, sign-out, and protected route layout",
+      "description": "As a user, I want my session to persist and I want to sign out when needed.",
+      "acceptanceCriteria": [
+        "SvelteKit hooks.server.ts validates session on each request",
+        "Session user is available in page data via layout server load function",
+        "Sign-out button in workspace header ends session and redirects to sign-in",
+        "Unauthenticated access to protected routes redirects to sign-in (but workspace root allows unauthenticated access for temp project)",
+        "Session persists across page reloads (cookie-based)",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Create provider registry types and provider interface",
+      "description": "As a developer, I need typed provider abstractions so that MiniMax (and future providers) are behind a clean adapter boundary.",
+      "acceptanceCriteria": [
+        "ProviderId type: 'minimax' | 'elevenlabs' | 'stability'",
+        "ProviderRegistryEntry interface with id, enabled, stub, displayName",
+        "V1 registry: minimax enabled, elevenlabs stub/disabled, stability stub/disabled",
+        "MusicProvider interface with: generateTextToMusic, generateInstrumental, generateCoverRestyle, optional streamGenerationAudio, optional preprocessCoverSource",
+        "Input/output types defined: TextToMusicInput, InstrumentalGenerationInput, CoverRestyleInput, ProviderGenerationHandle, ProviderAudioChunk",
+        "All types at /src/lib/providers/types.ts",
+        "Registry at /src/lib/providers/registry.ts",
+        "No 'any' in provider types",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Create MiniMax request validator with full test matrix",
+      "description": "As a developer, I need a centralized MiniMax validation module so that no endpoint or UI duplicates validation rules.",
+      "acceptanceCriteria": [
+        "Validator module at /src/lib/providers/minimax/validateMusicRequest.ts",
+        "Validates: prompt non-empty",
+        "Validates: instrumental true + lyrics = invalid (clear error, not silent ignore)",
+        "Validates: non-instrumental + no lyrics + no optimizer = invalid",
+        "Validates: non-instrumental + lyrics = valid",
+        "Validates: non-instrumental + no lyrics + optimizer on = valid",
+        "Validates: unsupported structure tags produce warning",
+        "Validates: cover/re-style requires source asset",
+        "Validates: cover/re-style without source = invalid",
+        "Validates: lyrics length within MiniMax limits",
+        "Test file at /src/lib/providers/minimax/validateMusicRequest.test.ts with all above cases",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": "This is the single source of truth for MiniMax validation. No ad-hoc validation elsewhere."
+    },
+    {
+      "id": "US-012",
+      "title": "Create MiniMax adapter: text-to-music, instrumental, and lyrics request formatting",
+      "description": "As a developer, I need the MiniMax adapter to format generation requests correctly so that the workflow can call MiniMax through a typed boundary.",
+      "acceptanceCriteria": [
+        "MiniMax adapter at /src/lib/providers/minimax/adapter.ts implements MusicProvider interface",
+        "generateTextToMusic formats prompt payload for MiniMax Music 2.6 API",
+        "generateInstrumental sets is_instrumental=true in payload",
+        "Lyrics are included in payload when provided and instrumental is false",
+        "Lyrics optimizer/autogeneration flag is passed through when supported",
+        "API key read from environment variable MINIMAX_API_KEY (never exposed client-side)",
+        "No 'any' types in request/response handling",
+        "Mocked tests verify correct payload formatting for each generation mode",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Create MiniMax adapter: cover/re-style payload mapping",
+      "description": "As a developer, I need the adapter to handle cover/re-style requests so that users can generate variations from existing audio.",
+      "acceptanceCriteria": [
+        "generateCoverRestyle method in MiniMax adapter accepts source audio URL/buffer and optional lyrics",
+        "Payload formatted for MiniMax music-cover endpoint",
+        "Source audio reference uses R2-stored file (not a provider URL)",
+        "Lyrics are optional in cover/re-style mode",
+        "Mocked test verifies cover/re-style payload structure",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "Create MiniMax adapter: streaming hex response handler and error normalization",
+      "description": "As a developer, I need the adapter to handle MiniMax's streaming hex output and normalize errors so that the workflow receives clean typed data.",
+      "acceptanceCriteria": [
+        "streamGenerationAudio method yields ProviderAudioChunk objects from MiniMax hex-encoded stream",
+        "Each chunk contains decoded audio bytes",
+        "Stream termination is detected correctly",
+        "Non-streaming URL fallback: if URL mode is used, adapter returns the URL (workflow must fetch immediately)",
+        "Provider errors are caught and normalized to typed error objects with error codes: provider_timeout, provider_validation_error, provider_auth_error, provider_rate_limited",
+        "Provider responses are normalized before leaving adapter code",
+        "Mocked test: streaming hex chunks assembled correctly",
+        "Mocked test: error normalization for each error type",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": "MiniMax streaming hex chunks are the final output bytes delivered incrementally, not a separate preview artifact."
+    },
+    {
+      "id": "US-015",
+      "title": "Create asset and job status state machine services with tests",
+      "description": "As a developer, I need state machine services that enforce valid status transitions so that assets and jobs never reach invalid states.",
+      "acceptanceCriteria": [
+        "Asset status state machine at /src/lib/services/asset-status.ts",
+        "Allowed asset transitions: created->queued, queued->generating, queued->failed, generating->receiving_audio, generating->failed, receiving_audio->persisting, receiving_audio->failed, persisting->ready, persisting->failed, ready->deleted, failed->deleted",
+        "Disallowed: failed->queued, failed->generating, ready->failed, ready->receiving_audio",
+        "Job status state machine at /src/lib/services/job-status.ts",
+        "Allowed job transitions: created->queued, queued->generating, queued->cancelled, generating->receiving_audio, generating->failed, receiving_audio->persisting, receiving_audio->failed, persisting->succeeded, persisting->failed",
+        "Disallowed: failed->queued, failed->generating, succeeded->failed, cancelled->generating",
+        "Both services export a validateTransition(current, next) function that returns valid/invalid with reason",
+        "Test file covers all allowed and disallowed transitions",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": "Failed jobs are immutable. Retry always creates a new job."
+    },
+    {
+      "id": "US-016",
+      "title": "Create quota reservation service with tests",
+      "description": "As a developer, I need quota reservation logic so that generations are metered and double-generation is prevented.",
+      "acceptanceCriteria": [
+        "Quota service at /src/lib/services/quota.ts",
+        "reserveQuota(ownerId, jobId, idempotencyKey): creates reservation with 10-minute TTL and 'reserved' status",
+        "commitQuota(reservationId): transitions to 'committed'",
+        "releaseQuota(reservationId): transitions to 'released'",
+        "expireStaleReservations(): transitions expired 'reserved' rows to 'expired'",
+        "Allowed transitions: reserved->committed, reserved->released, reserved->expired",
+        "Disallowed: committed->released, expired->committed, released->committed",
+        "Idempotency key prevents duplicate reservations on repeated calls",
+        "checkDailyUsage(ownerId): returns count of committed reservations today",
+        "Test file covers all transitions, idempotency, and daily usage check",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": "Daily limit is 10 for authenticated users. Resets at midnight UTC."
+    },
+    {
+      "id": "US-017",
+      "title": "Create take edge service with cycle prevention and tests",
+      "description": "As a developer, I need a take edge service so that asset derivation relationships are stored and cycles are prevented.",
+      "acceptanceCriteria": [
+        "Take edge service at /src/lib/services/take-edges.ts",
+        "createEdge(projectId, ownerId, parentAssetId, childAssetId, branchType, branchPrompt?): creates edge row",
+        "Before creating edge, service checks for cycles (BFS/DFS from child to see if parent is reachable)",
+        "If cycle detected, returns error without creating edge",
+        "getChildren(assetId): returns child edges",
+        "getParents(assetId): returns parent edges",
+        "Deleting an asset soft-deletes dependent edges",
+        "Test file: create edge, get children, get parents, cycle detection (A->B->C->A rejected), self-edge rejected",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-018",
+      "title": "Create R2 storage service for audio files",
+      "description": "As a developer, I need an R2 storage abstraction so that audio files can be uploaded, downloaded, and served with signed URLs.",
+      "acceptanceCriteria": [
+        "R2 service at /src/lib/services/r2-storage.ts",
+        "uploadAudio(objectKey, bytes, contentType): uploads to R2 bucket",
+        "getSignedUrl(objectKey, expiresIn?): returns time-limited signed URL for playback",
+        "deleteObject(objectKey): deletes from R2",
+        "Object key convention: {ownerId}/{projectId}/{assetId}.{ext}",
+        "R2 bucket binding configured in wrangler.jsonc",
+        "R2_BUCKET_NAME env var in .env.example",
+        "Typecheck passes"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": "Provider URLs must never be stored as canonical audio source. Only R2 object keys are canonical."
+    },
+    {
+      "id": "US-019",
+      "title": "Create file upload endpoint for cover/re-style source audio",
+      "description": "As a developer, I need a server endpoint that validates and persists uploaded audio files so that cover/re-style has source material.",
+      "acceptanceCriteria": [
+        "POST endpoint at /api/upload (or SvelteKit form action)",
+        "Validates session (rejects unauthenticated)",
+        "Validates file size: max 50MB",
+        "Validates file type: MP3, WAV, M4A, FLAC only",
+        "Persists file to R2 via R2 storage service",
+        "Creates audio_asset row with source_type='uploaded', provider='local_upload', status='ready'",
+        "Sets r2_object_key on the asset",
+        "Returns asset ID on success",
+        "Returns clear error messages for size/type violations",
+        "Typecheck passes"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-020",
+      "title": "Create generation endpoint: validate, create job + asset + quota reservation, enqueue",
+      "description": "As a developer, I need the server endpoint that initiates a generation so that the frontend can submit prompts.",
+      "acceptanceCriteria": [
+        "POST endpoint at /api/generate (or SvelteKit form action)",
+        "Validates session and sets DB user context for RLS",
+        "Validates request through MiniMax validator (/src/lib/providers/minimax/validateMusicRequest.ts)",
+        "Checks daily quota via quota service; rejects with clear message if limit reached",
+        "Creates audio_asset row with status='created'",
+        "Creates generation_job row with status='created' and idempotency_key",
+        "Creates quota_reservation with status='reserved' and 10-minute TTL",
+        "Enqueues job to Cloudflare Queue",
+        "Returns job ID and asset ID to client",
+        "If validation fails, no job/asset/reservation is created",
+        "Typecheck passes"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": "Idempotency key prevents double-generation from repeated clicks."
+    },
+    {
+      "id": "US-021",
+      "title": "Create Cloudflare Workflow scaffold: consume queue, update statuses",
+      "description": "As a developer, I need the Cloudflare Workflow that processes generation jobs so that MiniMax calls happen durably in the background.",
+      "acceptanceCriteria": [
+        "Cloudflare Queue configured in wrangler.jsonc",
+        "Cloudflare Workflow consumer defined that receives job messages",
+        "Workflow reads generation_job and audio_asset from DB",
+        "Workflow updates job status to 'queued' then 'generating'",
+        "Workflow updates asset status in sync with job status",
+        "Workflow structure has clear steps for: provider call, audio assembly, R2 persist, finalize",
+        "If job not found, workflow logs error and exits",
+        "Typecheck passes"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-022",
+      "title": "Implement Workflow: call MiniMax adapter, receive streaming hex, assemble bytes, persist to R2",
+      "description": "As a developer, I need the core Workflow execution path so that generation produces a persisted audio file.",
+      "acceptanceCriteria": [
+        "Workflow calls MiniMax adapter with stream=true via streamGenerationAudio",
+        "Workflow updates asset status to 'receiving_audio' when chunks begin",
+        "Workflow assembles hex-decoded chunks into final audio byte array",
+        "Workflow updates asset status to 'persisting' before R2 write",
+        "Workflow writes final audio file to R2 via R2 storage service",
+        "Workflow updates asset: status='ready', r2_object_key set, duration_sec/format/sample_rate populated where detectable",
+        "Workflow updates job: status='succeeded'",
+        "Non-streaming fallback: if URL mode used, workflow fetches URL immediately and streams to R2 (URL never stored)",
+        "Typecheck passes"
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": "This is the happy path. Error handling is in the next story."
+    },
+    {
+      "id": "US-023",
+      "title": "Implement Workflow: error handling, status transitions, and quota commit/release",
+      "description": "As a developer, I need robust error handling in the Workflow so that failures are tracked and quota is managed correctly.",
+      "acceptanceCriteria": [
+        "If provider returns validation error: job and asset to 'failed', error_code='provider_validation_error', quota released",
+        "If provider times out: job and asset to 'failed', error_code='provider_timeout', quota released",
+        "If provider auth fails: error_code='provider_auth_error', quota released",
+        "If provider rate limits: error_code='provider_rate_limited', quota released",
+        "If stream breaks before valid file: error_code='stream_interrupted', job and asset to 'failed'",
+        "If audio assembly fails: error_code='audio_assembly_failed'",
+        "If R2 write fails: error_code='r2_write_failed', job and asset to 'failed'",
+        "On success: quota reservation committed",
+        "On failure before provider consumption: quota reservation released",
+        "Failed jobs are never mutated back to a non-failed state",
+        "Typecheck passes"
+      ],
+      "priority": 23,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-024",
+      "title": "Create SSE endpoint for job status updates with session validation",
+      "description": "As a developer, I need a server-sent events endpoint so that the client receives real-time generation status changes.",
+      "acceptanceCriteria": [
+        "SSE endpoint at /api/events (or /api/sse)",
+        "Validates session; rejects unauthenticated (except temp sessions)",
+        "Streams job status change events for the authenticated user's jobs",
+        "Event format includes: jobId, assetId, status, errorCode (if failed)",
+        "Connection stays open until client disconnects",
+        "Handles client disconnect gracefully (no resource leaks)",
+        "Typecheck passes"
+      ],
+      "priority": 24,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-025",
+      "title": "Wire client to consume SSE and update block status reactively",
+      "description": "As a creator, I want block cards to update in real-time when my generation progresses so that I see status changes without refreshing.",
+      "acceptanceCriteria": [
+        "Client-side SSE consumer module at /src/lib/stores/sse.svelte.ts (or similar)",
+        "Connects to SSE endpoint on workspace load",
+        "Parses incoming status events and updates relevant asset/job state in stores",
+        "Block cards re-render when their asset status changes",
+        "Automatic reconnection on connection drop with exponential backoff",
+        "Connection closed on navigation away from workspace",
+        "Typecheck passes"
+      ],
+      "priority": 25,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-026",
+      "title": "Forward audio chunks from Workflow through SSE for live-listening",
+      "description": "As a creator, I want to hear audio as it generates so that I don't wait in silence.",
+      "acceptanceCriteria": [
+        "Workflow optionally forwards decoded audio chunks to a live-listening channel (e.g., via Cloudflare pub/sub, KV, or direct SSE push)",
+        "SSE endpoint forwards audio chunk events to the client for the relevant job",
+        "Client audio engine can receive and play incoming chunks as they arrive",
+        "Block card shows 'Live' indicator while receiving audio chunks",
+        "If live-listening fails but R2 persistence succeeds, asset still becomes ready",
+        "Live stream is not labeled as a separate preview artifact",
+        "Typecheck passes"
+      ],
+      "priority": 26,
+      "passes": false,
+      "notes": "This is a best-effort feature. Generation success does not depend on live-listening working."
+    },
+    {
+      "id": "US-027",
+      "title": "Create audio engine module with AudioContext lifecycle and buffer loading",
+      "description": "As a developer, I need a headless audio engine so that all audio behavior is isolated from Svelte components.",
+      "acceptanceCriteria": [
+        "Audio engine module at /src/lib/audio-engine/engine.ts",
+        "Implements AudioEngine interface with loadAsset, unloadAsset, dispose methods",
+        "Creates AudioContext on first user interaction (respects browser autoplay policy)",
+        "Manages AudioContext lifecycle: create, suspend, resume, close",
+        "loadAsset(assetId, url): fetches audio from URL, decodes to AudioBuffer, stores by assetId",
+        "unloadAsset(assetId): removes stored buffer",
+        "dispose(): closes AudioContext and clears all buffers",
+        "Can be tested with mocked AudioContext",
+        "Svelte components never directly instantiate AudioContext",
+        "Typecheck passes"
+      ],
+      "priority": 27,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-028",
+      "title": "Implement single-asset playback with transport controls",
+      "description": "As a developer, I need the audio engine to play/pause/stop a single audio asset so that block preview playback works.",
+      "acceptanceCriteria": [
+        "play(): starts playback from current position using AudioBufferSourceNode",
+        "pause(): suspends AudioContext, preserving position",
+        "stop(): stops playback, resets position to 0",
+        "seek(timeSec): sets playback position",
+        "Engine exposes reactive state: currentTime (number), isPlaying (boolean)",
+        "currentTime updates during playback (via requestAnimationFrame or AudioContext.currentTime)",
+        "Can play a single loaded asset by ID",
+        "Typecheck passes"
+      ],
+      "priority": 28,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-029",
+      "title": "Implement per-clip gain, mute, and solo in audio engine",
+      "description": "As a developer, I need the audio engine to support per-clip mixing so that stacked playback has volume and solo control.",
+      "acceptanceCriteria": [
+        "setClipGain(clipId, gainDb): sets GainNode value for the clip",
+        "setClipMute(clipId, muted): disconnects/reconnects clip audio path",
+        "setClipSolo(clipId, soloed): marks clip as soloed",
+        "Solo semantics: if no clips soloed, all non-muted clips audible",
+        "Solo semantics: if any clips soloed, only soloed clips audible",
+        "Solo semantics: multiple soloed clips play simultaneously",
+        "Solo semantics: mute state persists while solo active; clearing all solos restores prior mute states",
+        "Each clip has its own GainNode in the audio graph",
+        "Typecheck passes"
+      ],
+      "priority": 29,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-030",
+      "title": "Implement clip start offset scheduling and trim region playback",
+      "description": "As a developer, I need the audio engine to schedule clips at offsets and respect trim boundaries so that arrangement timing works.",
+      "acceptanceCriteria": [
+        "setClipStartOffset(clipId, startTimeSec): clip begins at this time on the transport timeline",
+        "setClipTrim(clipId, trimStartSec, trimEndSec): only the trimmed region of the source buffer plays",
+        "During play(), clips scheduled to start at their offset relative to transport time",
+        "Clips that start after current transport position are scheduled for the future",
+        "Clips whose start+duration is before current transport position are skipped",
+        "Trim and offset work together: clip plays trimmed region starting at offset time",
+        "Typecheck passes"
+      ],
+      "priority": 30,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-031",
+      "title": "Implement drag-to-extend looping in audio engine",
+      "description": "As a developer, I need the audio engine to loop a clip's trimmed region within clip_duration_sec so that extended clips repeat seamlessly.",
+      "acceptanceCriteria": [
+        "setClipLoop(clipId, clipDurationSec): sets the total playback duration for the clip",
+        "If clipDurationSec > trimmed audio length, the trimmed region repeats",
+        "Partial loops supported: if clipDurationSec = 2.5 * trimmed length, audio plays 2 full loops + 0.5 of a third",
+        "If clipDurationSec <= trimmed audio length, no looping occurs (clip plays once, possibly shorter)",
+        "Looping implemented by scheduling multiple AudioBufferSourceNodes or using loop property with correct boundaries",
+        "Typecheck passes"
+      ],
+      "priority": 31,
+      "passes": false,
+      "notes": "V1 does not guarantee seamless beat-perfect loops. DAW-standard drag-to-extend behavior."
+    },
+    {
+      "id": "US-032",
+      "title": "Implement synchronized multi-clip playback",
+      "description": "As a developer, I need the audio engine to play multiple clips simultaneously from a shared clock so that arrangement stacking works.",
+      "acceptanceCriteria": [
+        "setArrangement(clips: ArrangementClipState[]): configures all clips for playback",
+        "play() schedules all non-muted, non-solo-excluded clips on the same AudioContext clock",
+        "Each clip uses its own start offset, trim, gain, mute/solo, and clip_duration_sec",
+        "Arrangement duration = max(clip.startTimeSec + clip.clipDurationSec) across all clips",
+        "Transport stops when arrangement end is reached",
+        "Adding/removing clips while stopped correctly updates the arrangement",
+        "Typecheck passes"
+      ],
+      "priority": 32,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-033",
+      "title": "Create arrangement store as live source of truth",
+      "description": "As a developer, I need a Svelte 5 runes store for arrangement state so that UI and audio engine share a reactive data source.",
+      "acceptanceCriteria": [
+        "Arrangement store at /src/lib/stores/arrangement.svelte.ts",
+        "Uses Svelte 5 runes ($state, $derived) for reactivity",
+        "Stores array of ArrangementClipState objects",
+        "Exposes methods: addClip, removeClip, updateClip, reorderClips",
+        "Exposes derived: totalDuration, activeClips (non-muted/solo-aware), clipCount",
+        "Store is the single source of truth; audio engine and UI consume it",
+        "Typecheck passes"
+      ],
+      "priority": 33,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-034",
+      "title": "Wire audio engine to consume arrangement store reactively",
+      "description": "As a developer, I need the audio engine to react to arrangement store changes so that playback reflects the current arrangement.",
+      "acceptanceCriteria": [
+        "When arrangement store clips change, audio engine's setArrangement is called",
+        "When a clip's gain/mute/solo changes in the store, the corresponding engine method is called",
+        "When a clip's trim/offset/duration changes in the store, the engine updates scheduling",
+        "Reactive binding uses Svelte 5 $effect or equivalent",
+        "Engine updates do not cause audible glitches when not playing",
+        "Typecheck passes"
+      ],
+      "priority": 34,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-035",
+      "title": "Implement debounced DB persistence and hydration for arrangement state",
+      "description": "As a developer, I need arrangement state to persist to DB and reload on project open so that edits survive browser close.",
+      "acceptanceCriteria": [
+        "Clip edits (gain, mute, solo, trim, offset, duration, layer order) trigger debounced DB writes (500-1000ms debounce)",
+        "Destructive actions (remove clip) persist immediately with no debounce",
+        "On project load, arrangement store is hydrated from arrangement_clips DB rows",
+        "Hydration populates all clip fields correctly including clip_duration_sec",
+        "DB writes use the RLS-protected connection (SET LOCAL app.user_id)",
+        "Typecheck passes"
+      ],
+      "priority": 35,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-036",
+      "title": "Create main workspace layout with project header",
+      "description": "As a creator, I want a clean workspace layout so that I can access all features from one screen.",
+      "acceptanceCriteria": [
+        "Main workspace page at / (root route) or /workspace",
+        "Layout includes regions: project header, generate panel area, asset list area, arrangement area with transport",
+        "Project header shows: project title (editable inline), remaining daily quota (e.g., '7/10'), sign-out button",
+        "Authenticated users see their project; unauthenticated users see a temp workspace",
+        "On first authenticated visit, auto-creates a default project with title 'My Project'",
+        "On subsequent visits, loads existing project",
+        "Layout is mobile-first and responsive",
+        "Uses shadcn-svelte components for UI elements",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 36,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-037",
+      "title": "Create generate panel with prompt field and generate button",
+      "description": "As a creator, I want a prompt input and generate button so that I can start creating music.",
+      "acceptanceCriteria": [
+        "Generate panel component rendered in workspace layout",
+        "Text prompt field (textarea or input)",
+        "Generate button that submits to the generation endpoint",
+        "Button is disabled while prompt is empty",
+        "Button shows loading state during submission",
+        "On successful submit, returns job/asset IDs (wiring to block list is next story)",
+        "Validation errors from endpoint displayed below form",
+        "Uses shadcn-svelte form components",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 37,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-038",
+      "title": "Add instrumental toggle and lyrics textarea to generate panel",
+      "description": "As a creator, I want to toggle instrumental mode and enter lyrics so that I control whether the output has vocals.",
+      "acceptanceCriteria": [
+        "Instrumental only toggle (switch/checkbox) in generate panel",
+        "Lyrics textarea in generate panel",
+        "When instrumental is on, lyrics textarea is disabled with message: 'Lyrics are not used in instrumental mode'",
+        "Submitting instrumental=true with lyrics content shows validation error (not silently ignored)",
+        "Lyrics character count shown with MiniMax limit indicator",
+        "Lyrics value sent to generation endpoint",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 38,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-039",
+      "title": "Add structure tag helper to generate panel",
+      "description": "As a creator, I want quick-insert buttons for song structure tags so that I can guide the song shape.",
+      "acceptanceCriteria": [
+        "Structure tag palette/toolbar below or adjacent to lyrics textarea",
+        "Buttons for: [Intro], [Verse], [Verse 1], [Verse 2], [Pre-Chorus], [Chorus], [Hook], [Bridge], [Breakdown], [Solo], [Outro]",
+        "Tapping a tag inserts it at cursor position in the lyrics field",
+        "Tags are not silently lowercased or rewritten",
+        "Unsupported bracketed tags in lyrics produce a warning before submission",
+        "Tags stored in generation metadata (structure_tags_json)",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 39,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-040",
+      "title": "Add cover/re-style mode to generate panel with file upload",
+      "description": "As a creator, I want to upload a source track and generate a cover/re-style so that MiniMax can create a new rendition.",
+      "acceptanceCriteria": [
+        "Generate panel has a mode toggle or tab: 'Generate' vs 'Cover / Re-style'",
+        "In Cover / Re-style mode: file upload input appears",
+        "Accepted formats shown: MP3, WAV, M4A, FLAC (max 50MB)",
+        "Upload calls the file upload endpoint and receives asset ID",
+        "Upload progress indicator shown",
+        "Lyrics field remains available (optional in cover mode)",
+        "Submit calls generation endpoint with source asset ID and cover_restyle job type",
+        "Feature labeled 'Cover / Re-style', not 'Generate around reference'",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 40,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-041",
+      "title": "Create global transport bar with play/pause/stop and time display",
+      "description": "As a creator, I want transport controls so that I can play and stop my arrangement.",
+      "acceptanceCriteria": [
+        "Transport bar component rendered in arrangement area of workspace",
+        "Play button (starts playback via audio engine)",
+        "Pause button (pauses at current position)",
+        "Stop button (stops and resets to 0:00)",
+        "Current time display (MM:SS format, updates during playback)",
+        "Arrangement length display",
+        "Export rough mix button (wired in later story)",
+        "Transport state driven by audio engine, not component state",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 41,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-042",
+      "title": "Create ready block card with waveform, title, and info",
+      "description": "As a creator, I want to see my generated audio as visual cards so that I can browse and manage my creations.",
+      "acceptanceCriteria": [
+        "Block card component for ready assets",
+        "Shows: waveform visualization (wavesurfer.js), title (editable on tap), duration, prompt summary (truncated), provider badge ('MiniMax')",
+        "Waveform renders from the R2-hosted audio file URL",
+        "wavesurfer.js used for visualization only (not for playback control)",
+        "Card is responsive and mobile-friendly",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 42,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-043",
+      "title": "Add action buttons to ready block card",
+      "description": "As a creator, I want action buttons on each block so that I can play, arrange, branch, and export.",
+      "acceptanceCriteria": [
+        "Play preview button: plays the block's audio via audio engine (single-asset mode)",
+        "Add to arrangement button: creates an arrangement clip (wired in US-046)",
+        "Create variation button: opens generate panel prefilled (wired in US-054)",
+        "Cover / Re-style button: initiates cover flow from this asset (wired in US-055)",
+        "Export/download button: downloads the block (wired in US-057)",
+        "Buttons use shadcn-svelte icon buttons or dropdown menu",
+        "Long press on mobile opens context menu with all actions",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 43,
+      "passes": false,
+      "notes": "Action wiring happens in later stories. This story creates the UI and placeholder click handlers."
+    },
+    {
+      "id": "US-044",
+      "title": "Create pending and failed block card states",
+      "description": "As a creator, I want visual feedback on in-progress and failed generations so that I know what's happening.",
+      "acceptanceCriteria": [
+        "Queued state: gray card, 'Queued' badge, spinner",
+        "Generating state: gray card, 'Generating...' badge, spinner",
+        "Receiving audio state: blue/highlighted card, 'Live' badge, shows live-listen player when chunks playable",
+        "Persisting state: card with 'Saving...' badge",
+        "Failed state: red-tinted card, error summary text, 'Retry' button",
+        "Cancel button visible only when status is 'queued' (before provider submission)",
+        "Retry creates a new generation job via the generation endpoint (does not mutate failed job)",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 44,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-045",
+      "title": "Create vertical block list and wire generate submit to show queued block",
+      "description": "As a creator, I want generated blocks to appear in a scrollable list immediately after submitting so that the workspace feels responsive.",
+      "acceptanceCriteria": [
+        "Vertical scrollable list of block cards in the asset list area",
+        "Blocks ordered by created_at descending (newest first)",
+        "After generate submit succeeds, a new block card appears immediately with 'Queued' state",
+        "Block card updates reactively as SSE status events arrive (queued -> generating -> receiving -> ready)",
+        "List loads existing assets from DB on workspace mount",
+        "Empty state: 'No blocks yet. Generate your first track above.'",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 45,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-046",
+      "title": "Create arrangement clip card and wire 'Add to arrangement' button",
+      "description": "As a creator, I want to add blocks to my arrangement so that I can stack and layer them.",
+      "acceptanceCriteria": [
+        "Clicking 'Add to arrangement' on a ready block creates an arrangement_clip row",
+        "New clip defaults: start_time_sec=0, trim_start_sec=0, trim_end_sec=null, clip_duration_sec=asset.duration_sec, gain_db=0, muted=false, soloed=false",
+        "Arrangement clip card component appears in the arrangement stack area",
+        "Clip card shows: title, mini waveform, placeholder areas for controls (wired in next stories)",
+        "Same asset can be added multiple times (each creates a separate clip)",
+        "Clip added to arrangement store",
+        "Audio engine loads the asset buffer if not already loaded",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 46,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-047",
+      "title": "Add start offset controls to arrangement clip card",
+      "description": "As a creator, I want to set when a clip starts in the arrangement so that not everything begins at the same time.",
+      "acceptanceCriteria": [
+        "Clip card shows start time value (formatted as seconds, e.g., '2.5s')",
+        "Numeric +/- stepper buttons to adjust start time",
+        "Step increment: 0.5 seconds",
+        "Minimum value: 0",
+        "Changing offset updates arrangement store",
+        "Arrangement store change triggers debounced DB persistence",
+        "Audio engine receives updated start offset",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 47,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-048",
+      "title": "Add trim controls to arrangement clip card waveform",
+      "description": "As a creator, I want to trim a clip's start and end so that I only use the part I want.",
+      "acceptanceCriteria": [
+        "Clip card waveform has draggable left handle for trim start",
+        "Clip card waveform has draggable right handle for trim end",
+        "Alternatively: numeric input fields for trim start and trim end (seconds)",
+        "Trim values stored on clip, not on source asset (non-destructive)",
+        "Original audio asset remains unchanged",
+        "If trim shortens clip below current clip_duration_sec, clip_duration_sec is reduced to match",
+        "Changed values update arrangement store and trigger debounced DB write",
+        "Audio engine receives updated trim values",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 48,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-049",
+      "title": "Add drag-to-extend loop handle to arrangement clip card",
+      "description": "As a creator, I want to drag the right edge of a clip to extend it so that the audio loops, like extending a clip in a DAW.",
+      "acceptanceCriteria": [
+        "Clip card waveform has a distinct drag handle on the right edge for extending",
+        "Dragging right extends clip_duration_sec beyond the trimmed audio length",
+        "Waveform visually repeats when dragged past source length",
+        "Partial loops supported (can stop at e.g., 1.5x the source length)",
+        "Releasing the handle updates clip_duration_sec in arrangement store",
+        "Debounced DB persistence saves the new clip_duration_sec",
+        "Audio engine receives updated duration for looping",
+        "If clip_duration_sec <= trimmed length, no visual looping shown",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 49,
+      "passes": false,
+      "notes": "DAW-standard drag-to-extend behavior. Arrangement length = max(start + clip_duration) across all clips. Always finite."
+    },
+    {
+      "id": "US-050",
+      "title": "Add gain slider and mute/solo toggles to arrangement clip card",
+      "description": "As a creator, I want volume and mix controls on each clip so that stacked blocks sound balanced.",
+      "acceptanceCriteria": [
+        "Gain slider (dB) on each clip card",
+        "Mute toggle button on each clip card",
+        "Solo toggle button on each clip card",
+        "Visual indicators: muted clips are dimmed, soloed clips are highlighted",
+        "Changes update arrangement store and trigger debounced DB write",
+        "Audio engine receives gain/mute/solo updates",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 50,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-051",
+      "title": "Add remove clip and layer order controls to arrangement clip card",
+      "description": "As a creator, I want to remove clips and reorder them visually so that my arrangement is organized.",
+      "acceptanceCriteria": [
+        "Remove button (or swipe-left gesture) on clip card",
+        "Remove shows confirmation before deleting",
+        "Remove deletes the arrangement_clip row (not the source asset) and persists immediately",
+        "Layer order up/down chevron buttons on clip card",
+        "Reordering updates layer_order in arrangement store",
+        "layer_order is visual display order only (no audio routing effect)",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 51,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-052",
+      "title": "Wire transport bar to audio engine for playback",
+      "description": "As a creator, I want transport buttons to actually play/pause/stop my arrangement so that I can audition my work.",
+      "acceptanceCriteria": [
+        "Play button calls audio engine play() which schedules all arrangement clips",
+        "Pause button calls audio engine pause()",
+        "Stop button calls audio engine stop() and resets time display to 0:00",
+        "Current time display updates reactively during playback from audio engine state",
+        "Arrangement length display shows total duration from arrangement store",
+        "Play/pause button toggles icon appropriately",
+        "Transport correctly reflects audio engine isPlaying state",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 52,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-053",
+      "title": "Wire arrangement clip card controls to audio engine",
+      "description": "As a creator, I want clip control changes to immediately affect playback so that I hear my edits in real-time.",
+      "acceptanceCriteria": [
+        "Changing gain slider updates audio engine clip gain in real-time",
+        "Toggling mute updates audio engine clip mute",
+        "Toggling solo updates audio engine clip solo (including multi-solo semantics)",
+        "Changing start offset updates audio engine clip scheduling",
+        "Changing trim updates audio engine clip trim region",
+        "Changing loop/extend updates audio engine clip duration",
+        "All changes flow: UI -> arrangement store -> reactive binding -> audio engine",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 53,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-054",
+      "title": "Wire 'Create variation' action with prefilled generate panel and take edge",
+      "description": "As a creator, I want to create a variation from an existing block so that I can explore without losing the original.",
+      "acceptanceCriteria": [
+        "Clicking 'Create variation' on a ready block opens the generate panel",
+        "Prompt field is prefilled with the parent block's prompt",
+        "Lyrics field is prefilled with the parent block's lyrics (if any)",
+        "User can edit prompt/lyrics before submitting",
+        "On submit, generation endpoint is called normally",
+        "After new asset is created, a take_edge row is created: parent=source block, child=new block, branch_type='prompt_variation'",
+        "Parent block's variation count updates in UI",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 54,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-055",
+      "title": "Wire 'Cover / Re-style' action from ready block with take edge",
+      "description": "As a creator, I want to re-style an existing ready block so that I can transform a strong result.",
+      "acceptanceCriteria": [
+        "Clicking 'Cover / Re-style' on a ready block opens generate panel in cover mode",
+        "Source asset is pre-selected (no upload needed — uses the R2-stored file)",
+        "User can optionally add lyrics or adjust prompt",
+        "On submit, generation endpoint called with job_type='cover_restyle' and source asset ID",
+        "After new asset created, take_edge row created: parent=source, child=new, branch_type='cover_restyle'",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 55,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-056",
+      "title": "Add take DAG display to block cards",
+      "description": "As a creator, I want to see which blocks are derived from which so that I can navigate my generation history.",
+      "acceptanceCriteria": [
+        "Block cards with parent edges show 'Derived from: [parent title]' badge",
+        "Block cards with child edges show 'N variations' link",
+        "Tapping 'Derived from' scrolls to or highlights the parent block in the list",
+        "Tapping 'N variations' filters list or scrolls to show child blocks",
+        "Badges query take_edges from DB on workspace load",
+        "Deleting/hiding one variation does not affect siblings",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 56,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-057",
+      "title": "Implement individual block export/download",
+      "description": "As a creator, I want to download a generated block so that I can use it outside the app.",
+      "acceptanceCriteria": [
+        "Export/download button on ready block card triggers file download",
+        "Download serves the durable R2-backed source file via signed URL",
+        "Downloaded filename includes block title (sanitized) and format extension",
+        "Format preserved as-is from provider (no re-encoding)",
+        "UI displays available format (e.g., 'MP3') and does not claim 'lossless' unless actually lossless",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 57,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-058",
+      "title": "Build ArrangementSnapshotV1 from arrangement state with schema validation",
+      "description": "As a developer, I need a typed snapshot builder so that the rough mixdown renderer has a validated input.",
+      "acceptanceCriteria": [
+        "ArrangementSnapshotV1 TypeScript interface defined with: snapshotVersion (1), projectId, renderedAt, sampleRate (44100), bitDepth (16), clips array",
+        "Each clip in snapshot: clipId, assetId, sourceUrl (signed R2 URL), startTimeSec, trimStartSec, trimEndSec, clipDurationSec, gainDb, muted, soloed, layerOrder",
+        "buildSnapshot(projectId, clips, getSignedUrl) function creates a validated snapshot from arrangement store state",
+        "Validation rejects: missing required fields, negative times, invalid clipDurationSec",
+        "Snapshot respects mute/solo state (but includes all clips — renderer applies filtering)",
+        "Typecheck passes"
+      ],
+      "priority": 58,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-059",
+      "title": "Implement rough mixdown: OfflineAudioContext render and WAV download",
+      "description": "As a creator, I want to export my arrangement as a rough mix WAV file so that I can share or edit elsewhere.",
+      "acceptanceCriteria": [
+        "Export rough mix button in transport bar triggers mixdown",
+        "Mixdown builds ArrangementSnapshotV1 from current arrangement state",
+        "Browser loads all required audio buffers from signed R2 URLs",
+        "Browser creates OfflineAudioContext with sampleRate=44100",
+        "Renderer schedules all clips respecting: start offsets, trim, clip_duration_sec (looping), gain, mute, solo",
+        "Renderer produces AudioBuffer, encodes to WAV 44.1kHz / 16-bit PCM",
+        "User downloads the WAV file",
+        "Export labeled as 'Rough Mixdown' (not 'mastered' or 'final')",
+        "Loading/progress indicator during render",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 59,
+      "passes": false,
+      "notes": "Server-side rendering is post-V1. Optional: upload rendered file to R2 as rendered_export asset (stretch goal)."
+    },
+    {
+      "id": "US-060",
+      "title": "Add daily quota display and limit-reached UI",
+      "description": "As a user, I want to see how many generations I have left and when my limit resets so that I can plan my session.",
+      "acceptanceCriteria": [
+        "Project header shows remaining daily quota: 'N of 10 remaining today'",
+        "Quota count updates after each generation completes (committed reservation)",
+        "When daily limit reached: generate button is disabled",
+        "When daily limit reached: message shown: 'Daily limit reached. Resets at [HH:MM timezone]'",
+        "Reset time is midnight UTC displayed in user's local timezone",
+        "Quota fetched from server on workspace load via quota service checkDailyUsage",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 60,
+      "passes": false,
+      "notes": "Default limit: 10/day for authenticated users."
+    },
+    {
+      "id": "US-061",
+      "title": "Create Cloudflare Cron Trigger for expiring stale quota reservations",
+      "description": "As a developer, I need a scheduled job that expires abandoned quota reservations so that stuck reservations don't permanently consume quota.",
+      "acceptanceCriteria": [
+        "Cron Trigger configured in wrangler.jsonc to run every 5 minutes",
+        "Handler calls quota service expireStaleReservations()",
+        "Transitions all 'reserved' rows past their expires_at to 'expired'",
+        "Does not touch 'committed' or 'released' reservations",
+        "Typecheck passes"
+      ],
+      "priority": 61,
+      "passes": false,
+      "notes": "Quota reservation TTL is 10 minutes. Cron runs every 5 minutes."
+    },
+    {
+      "id": "US-062",
+      "title": "Create temp project workspace for unauthenticated users",
+      "description": "As an unauthenticated visitor, I want to immediately use the workspace so that I can try the product before signing up.",
+      "acceptanceCriteria": [
+        "Unauthenticated user lands directly in workspace (no login gate)",
+        "Browser session identifier generated and stored in cookie/localStorage",
+        "Temp project created in-memory or lightweight storage (not in user-owned DB tables)",
+        "All workspace features work: generate panel, block list, arrangement, transport, export",
+        "Temp project data is ephemeral and does not persist across browser sessions",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 62,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-063",
+      "title": "Implement session-based rate limiting for unauthenticated users",
+      "description": "As a system, I need to rate-limit unauthenticated users so that temp sessions don't exhaust provider resources.",
+      "acceptanceCriteria": [
+        "Unauthenticated users limited to 3 generations per browser session",
+        "Generation endpoint checks session-based counter before processing",
+        "When limit reached: generate button disabled with message 'Sign up to get more generations'",
+        "Rate limit counter stored in cookie or server-side session keyed by session ID",
+        "Authenticated users are not affected by session-based limits (they use daily quota)",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 63,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-064",
+      "title": "Add persistent sign-up banner for unauthenticated users",
+      "description": "As a product, I want unauthenticated users to see a persistent sign-up prompt so that they convert to registered users.",
+      "acceptanceCriteria": [
+        "Persistent banner at top of workspace for unauthenticated users",
+        "Banner text: 'Sign up to save your project and get more generations'",
+        "Banner includes a sign-up CTA button that navigates to /signup",
+        "Banner is not dismissible (always visible for unauthenticated users)",
+        "Banner does not appear for authenticated users",
+        "Banner does not obstruct workspace functionality",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 64,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
