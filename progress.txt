@@ -914,3 +914,23 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - `$state(data.prop)` captures initial value of data — for edit drafts, initialize empty and set in handler instead
   - Quota display: `data.quotaLimit - data.quotaUsed` gives remaining count
 ---
+
+## 2026-04-25 - US-037
+- Created generate panel component at `src/lib/components/generate-panel.svelte`
+- Textarea prompt field with label, generate button with loading state, validation error display
+- Button disabled when prompt is empty or submitting or no projectId
+- Submits to POST /api/generate with mode='text_to_music', auto-generated idempotencyKey, lyricsOptimizer=true default
+- On success, clears prompt and stores jobId/assetId in lastResult (for future block list wiring)
+- On error, displays server error message or network error fallback
+- Added shadcn-svelte Textarea component via CLI
+- Added `WithoutChildren` type export to `src/lib/utils.ts` (required by textarea component)
+- Wired GeneratePanel into workspace page `+page.svelte`, replacing placeholder text
+- All 395 tests pass, typecheck passes (0 errors, 0 warnings)
+- Files changed: src/lib/components/generate-panel.svelte (new), src/lib/components/ui/textarea/ (new via shadcn CLI), src/lib/utils.ts (WithoutChildren type), src/routes/+page.svelte (import + wire component), prd.json, progress.txt
+- **Learnings for future iterations:**
+  - shadcn-svelte textarea component requires `WithoutChildren` type in utils.ts — not added by the CLI automatically
+  - GeneratePanel takes `projectId: string | null` prop — null for unauthenticated users (button disabled)
+  - `crypto.randomUUID()` for idempotency keys — available in all modern browsers
+  - Default mode is `text_to_music` with `lyricsOptimizer: true` — simplest path for prompt-only generation
+  - Error handling: parse JSON response for message, fallback to status code text
+---

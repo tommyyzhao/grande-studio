@@ -3,6 +3,7 @@
 	import { authClient } from '$lib/auth-client';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
+	import GeneratePanel from '$lib/components/generate-panel.svelte';
 
 	let { data } = $props();
 
@@ -118,7 +119,7 @@
 	<main class="flex min-h-0 flex-1 flex-col">
 		<!-- Generate Panel Area -->
 		<section class="border-border border-b px-4 py-4">
-			<p class="text-muted-foreground text-sm">Generate panel will appear here.</p>
+			<GeneratePanel projectId={data.project?.id ?? null} />
 		</section>
 
 		<!-- Scrollable content area: asset list + arrangement -->
