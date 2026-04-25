@@ -10,6 +10,14 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - shadcn-svelte CSS uses oklch color format in `:root` / `.dark` selectors
 - `tw-animate-css` is required for shadcn-svelte animations
 - Project uses `@sveltejs/adapter-cloudflare` with `pages_build_output_dir: ".svelte-kit/cloudflare"` in wrangler.jsonc
+- Drizzle ORM schema lives at `src/lib/server/db/schema.ts`; db client factory at `src/lib/server/db/index.ts`
+- Local dev uses `pg` driver via `createLocalDb()`; production uses `@neondatabase/serverless` via `createNeonDb()`
+- `drizzle.config.ts` reads `DATABASE_URL` from `process.env` (used by drizzle-kit CLI)
+- Local Postgres database is `grande_studio` on localhost:5432
+- Schema file must have at least `export {}` to be a valid TypeScript module (Drizzle requires it)
+- Use `.$type<EnumType>()` on text columns for typed enums in Drizzle (keeps DB flexible, TS strict)
+- Drizzle index definitions use a second arg function to `pgTable()` returning an array
+- Exported type aliases (SourceType, Provider, AssetStatus) from schema.ts are reusable across services
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -32,4 +40,38 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - shadcn-svelte components may import types not in the default utils.ts (e.g., WithElementRef)
   - Dev server starts on port 5173 by default
   - Typecheck: `npm run check` (runs svelte-kit sync + svelte-check)
+---
+
+## 2026-04-24 - US-002
+- Installed drizzle-orm, drizzle-kit, pg, @types/pg, @neondatabase/serverless
+- Created `drizzle.config.ts` reading DATABASE_URL from env, pointing at `src/lib/server/db/schema.ts`
+- Created `src/lib/server/db/index.ts` with dual driver support: `createLocalDb()` (node-postgres) and `createNeonDb()` (@neondatabase/serverless)
+- Created `src/lib/server/db/schema.ts` (empty module placeholder for future tables)
+- Updated `.env` with `DATABASE_URL=postgresql://localhost:5432/grande_studio`
+- Created `.env.example` with placeholder values
+- Created local Postgres database `grande_studio`
+- Verified connection with `drizzle-kit generate` and `drizzle-kit push`
+- Added npm scripts: `db:generate`, `db:push`, `db:studio`
+- Files changed: package.json, package-lock.json, drizzle.config.ts, src/lib/server/db/index.ts, src/lib/server/db/schema.ts, .env, .env.example
+- **Learnings for future iterations:**
+  - Schema file must export something (at least `export {}`) to be a valid TS module — otherwise `import * as schema` fails
+  - `drizzle-kit push` uses the `pg` driver automatically when dialect is `postgresql`
+  - Both `createLocalDb` and `createNeonDb` return compatible Drizzle instances — use the `Database` union type for code that works with either
+  - The `drizzle/` output directory is created by `drizzle-kit generate` for migrations
+---
+
+## 2026-04-24 18:14 - US-003
+- Defined `projects` and `audio_assets` tables in Drizzle schema at `src/lib/server/db/schema.ts`
+- projects: id (uuid PK), owner_id, title, created_at, updated_at, deleted_at
+- audio_assets: id (uuid PK), project_id (FK), owner_id, source_type, provider, provider_model, provider_job_id, title, prompt, lyrics, structure_tags_json, input_asset_ids_json, r2_object_key, duration_sec, format, sample_rate, bit_depth, status, error_json, created_at, updated_at, deleted_at
+- Indexes on audio_assets: owner_id, project_id
+- Generated migration `drizzle/0000_organic_red_hulk.sql`
+- Pushed migration to local Postgres — both tables created successfully
+- Files changed: src/lib/server/db/schema.ts, drizzle/0000_organic_red_hulk.sql, drizzle/meta/
+- **Learnings for future iterations:**
+  - Use `.$type<EnumType>()` on text columns for typed enum values in Drizzle (not pgEnum for flexibility)
+  - Indexes are defined as a second argument function to `pgTable()` returning an array
+  - `drizzle-kit generate` creates the first migration as `0000_*.sql` — subsequent stories will generate incremental migrations
+  - `drizzle-kit push` applies schema directly to local DB (no migration tracking table needed for dev)
+  - Exported type aliases (SourceType, Provider, AssetStatus) make it easy for services to reference allowed values
 ---
