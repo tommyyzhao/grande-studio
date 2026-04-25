@@ -6,7 +6,7 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - POST `/api/arrangement` creates arrangement_clip rows — auto-fetches asset duration and auto-increments layerOrder
 - `createArrangementPersistence(arrangementStore)` wraps the store with debounced DB writes — must call `flush()` and `dispose()` in `onDestroy`
 - `ArrangementClipState` has `assetId` but not title — maintain a separate `Map<assetId, title>` for display
-- Arrangement clip card component at `src/lib/components/arrangement-clip-card.svelte` — expects `clip: ArrangementClipState` and `title: string`
+- Arrangement clip card component at `src/lib/components/arrangement-clip-card.svelte` — expects `clip: ArrangementClipState`, `title: string`, and optional `onUpdateClip: (update: ClipUpdate) => void` callback for persisted edits
 - Svelte `class:` directive cannot use Tailwind opacity modifiers (e.g. `class:ring-foreground/10={cond}` fails) — use computed class strings with `$derived.by()` instead
 - `BlockAsset` type includes `jobId`, `errorCode`, `lyrics` fields — use `jobId` for SSE tracking and cancel/retry; `errorCode` for error display on failed cards
 - `PendingBlockCard` component at `src/lib/components/pending-block-card.svelte` handles all non-ready states; `BlockCard` at `block-card.svelte` handles ready state — parent conditionally renders based on `asset.status`
@@ -1128,4 +1128,20 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - Svelte 5 reactive Map pattern: `assetTitles = new Map(assetTitles).set(id, title)` to trigger reactivity
   - Audio engine buffers for arrangement clips should be loaded via `$effect` watching `arrangementStore.clips` to handle both hydration and add-to-arrangement flows
   - `arrangementPersistence.flush()` and `.dispose()` must be called in `onDestroy` to avoid lost debounced writes
+---
+
+## 2026-04-25 - US-047
+- Added start offset controls to arrangement clip card
+- Clip card now shows start time (e.g., '2.5s') with +/- stepper buttons
+- Step increment: 0.5 seconds, minimum value: 0
+- Decrement button disabled when start time is already 0
+- Changes flow through `onUpdateClip` callback → `arrangementPersistence.updateClip()` → debounced DB write + arrangement store → audio engine via bridge
+- Files changed:
+  - `src/lib/components/arrangement-clip-card.svelte` — added `onUpdateClip` callback prop, `Minus`/`Plus` stepper buttons, offset display with `formatOffset()`, increment/decrement handlers
+  - `src/routes/+page.svelte` — imported `ClipUpdate` type, added `handleUpdateClip` handler, passed `onUpdateClip` to `ArrangementClipCard`
+  - `prd.json` — marked US-047 as passes: true
+- **Learnings for future iterations:**
+  - `ArrangementClipCard` now accepts `onUpdateClip?: (update: ClipUpdate) => void` callback — same pattern can be reused for trim, gain, mute/solo, and loop controls in US-048 through US-051
+  - shadcn-svelte `Button` with `size="icon"` and custom `class="size-7"` works well for compact inline stepper controls
+  - `tabular-nums` Tailwind class ensures monospace number display in the offset label (prevents layout shift on value change)
 ---
