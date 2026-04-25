@@ -15,6 +15,8 @@
 		onExport?: (asset: BlockAsset) => void;
 		/** Map of parentAssetId → number of child variations */
 		variationCounts?: Map<string, number>;
+		/** Map of childAssetId → parentAssetId for "Derived from" badges */
+		parentEdges?: Map<string, string>;
 	}
 
 	let {
@@ -24,8 +26,46 @@
 		onCoverRestyle,
 		onCreateVariation,
 		onExport,
-		variationCounts
+		variationCounts,
+		parentEdges
 	}: Props = $props();
+
+	// ─── Scroll-to / highlight ──────────────────────────────────────────
+	let highlightedAssetId = $state<string | null>(null);
+	let highlightTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function scrollToAsset(assetId: string) {
+		const el = document.querySelector(`[data-asset-id="${assetId}"]`);
+		if (!el) return;
+		el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		// Flash highlight
+		highlightedAssetId = assetId;
+		if (highlightTimer) clearTimeout(highlightTimer);
+		highlightTimer = setTimeout(() => {
+			highlightedAssetId = null;
+		}, 1500);
+	}
+
+	function handleScrollToParent(parentAssetId: string) {
+		scrollToAsset(parentAssetId);
+	}
+
+	function handleScrollToVariations(parentAssetId: string) {
+		if (!parentEdges) return;
+		// Find the first child of this parent in the displayed list
+		for (const asset of displayAssets) {
+			if (parentEdges.get(asset.id) === parentAssetId) {
+				scrollToAsset(asset.id);
+				return;
+			}
+		}
+	}
+
+	// Look up parent title from asset list
+	function getParentTitle(parentAssetId: string): string {
+		const parent = assets.find((a) => a.id === parentAssetId);
+		return parent?.title ?? 'Unknown';
+	}
 
 	// ─── Local asset list state ─────────────────────────────────────────
 	// Seeded from server-loaded data; managed locally after mount
@@ -133,26 +173,33 @@
 		</p>
 	{:else}
 		{#each displayAssets as asset (asset.id)}
-			{#if asset.status === 'ready'}
-				<BlockCard
-					{asset}
-					audioUrl={getAudioUrl(asset)}
-					{engine}
-					onTitleChange={handleTitleChange}
-					{onAddToArrangement}
-					{onCreateVariation}
-					{onCoverRestyle}
-					{onExport}
-					variationCount={variationCounts?.get(asset.id) ?? 0}
-				/>
-			{:else}
-				<PendingBlockCard
-					{asset}
-					isLive={sseStore.isAssetLive(asset.id)}
-					onRetry={handleRetry}
-					onCancel={handleCancel}
-				/>
-			{/if}
+			{@const parentAssetId = parentEdges?.get(asset.id) ?? null}
+			<div data-asset-id={asset.id} class="transition-all duration-300" class:ring-2={highlightedAssetId === asset.id} class:ring-primary={highlightedAssetId === asset.id} class:rounded-xl={highlightedAssetId === asset.id}>
+				{#if asset.status === 'ready'}
+					<BlockCard
+						{asset}
+						audioUrl={getAudioUrl(asset)}
+						{engine}
+						onTitleChange={handleTitleChange}
+						{onAddToArrangement}
+						{onCreateVariation}
+						{onCoverRestyle}
+						{onExport}
+						variationCount={variationCounts?.get(asset.id) ?? 0}
+						parentAssetId={parentAssetId}
+						parentTitle={parentAssetId ? getParentTitle(parentAssetId) : null}
+						onScrollToParent={handleScrollToParent}
+						onScrollToVariations={handleScrollToVariations}
+					/>
+				{:else}
+					<PendingBlockCard
+						{asset}
+						isLive={sseStore.isAssetLive(asset.id)}
+						onRetry={handleRetry}
+						onCancel={handleCancel}
+					/>
+				{/if}
+			</div>
 		{/each}
 	{/if}
 </div>

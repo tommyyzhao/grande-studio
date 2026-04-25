@@ -3,7 +3,9 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 ---
 
 ## Codebase Patterns
-- Take edges API at `src/routes/api/take-edges/+server.ts`: POST creates edges, GET returns variation counts per parent asset — uses `TakeEdgeService` from `src/lib/services/take-edges.ts`
+- Take edges API at `src/routes/api/take-edges/+server.ts`: POST creates edges, GET returns `{ counts, edges }` — `counts` is Record<parentAssetId, number>, `edges` is array of `{ parentAssetId, childAssetId, branchType }`
+- `parentEdges` Map<childAssetId, parentAssetId> in workspace page — built from GET /api/take-edges edge data, passed through BlockList to BlockCard for "Derived from" badges
+- Block card scroll-to: `data-asset-id` attribute on wrapper div + `scrollIntoView()` + temporary `ring-2 ring-primary` highlight for 1.5s
 - GeneratePanel exports `prefill(prompt, lyrics, parentId)` — use `bind:this={generatePanel}` to prefill from parent components
 - POST `/api/arrangement` creates arrangement_clip rows — auto-fetches asset duration and auto-increments layerOrder
 - `createArrangementPersistence(arrangementStore)` wraps the store with debounced DB writes — must call `flush()` and `dispose()` in `onDestroy`
@@ -1266,4 +1268,18 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - `branchType` is determined by the generate panel based on `panelMode`: `'cover_restyle'` for cover mode, `'prompt_variation'` when `parentAssetId` is set in generate mode, `null` for fresh generations
   - Pre-selected cover source (from existing block) uses `coverSourceTitle` state to distinguish from file-upload flow — both set `sourceAssetId` but display differently in the UI
   - `clearCoverSource()` clears both the source display and `parentAssetId`, so the take edge won't be created if the user removes the pre-selected source
+---
+
+## 2026-04-25 - US-056
+- What was implemented: Added take DAG display to block cards with "Derived from: [parent title]" badge and clickable "N variations" link with scroll-to/highlight behavior
+- Files changed:
+  - `src/routes/api/take-edges/+server.ts` — Extended GET endpoint to return full `edges` array alongside `counts`, enabling client to build parent→child and child→parent mappings
+  - `src/routes/+page.svelte` — Added `parentEdges` state (Map<childAssetId, parentAssetId>), built from edge data on project load via `fetchEdgeData()`. Updates map on new edge creation. Passes `parentEdges` to BlockList.
+  - `src/lib/components/block-list.svelte` — Added `parentEdges` prop, scroll-to/highlight mechanism (`scrollToAsset()` with `data-asset-id` attributes and 1.5s ring highlight animation), parent title lookup from asset list, and navigation callbacks (`handleScrollToParent`, `handleScrollToVariations`)
+  - `src/lib/components/block-card.svelte` — Added `parentAssetId`, `parentTitle`, `onScrollToParent`, `onScrollToVariations` props. "Derived from: [title]" badge with GitBranch icon shows when parent exists. "N variations" badge changed from span to clickable button.
+- **Learnings for future iterations:**
+  - GET /api/take-edges now returns both `counts` and `edges` — `edges` is array of `{ parentAssetId, childAssetId, branchType }`
+  - `parentEdges` Map (childAssetId → parentAssetId) built client-side from edge data; parent titles looked up from the asset list in BlockList
+  - Scroll-to uses `data-asset-id` attribute + `scrollIntoView({ behavior: 'smooth', block: 'center' })` + temporary `ring-2 ring-primary` highlight for 1.5s
+  - `{@const}` in `{#each}` block used to compute per-item parentAssetId from the parentEdges map
 ---

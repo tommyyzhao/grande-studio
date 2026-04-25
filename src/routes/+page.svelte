@@ -74,24 +74,33 @@
 	let blockList = $state<ReturnType<typeof BlockList> | null>(null);
 	let generatePanel = $state<ReturnType<typeof GeneratePanel> | null>(null);
 
-	// ─── Variation counts (parentAssetId → number of children) ──────────
+	// ─── Take edge data (variation counts + parent edges) ──────────────
 	let variationCounts = $state<Map<string, number>>(new Map());
+	/** Map from childAssetId → parentAssetId for "Derived from" badges */
+	let parentEdges = $state<Map<string, string>>(new Map());
 
-	// Load variation counts on project load
+	// Load edge data on project load
 	$effect(() => {
 		if (!data.project?.id) return;
-		fetchVariationCounts(data.project.id);
+		fetchEdgeData(data.project.id);
 	});
 
-	async function fetchVariationCounts(projectId: string) {
+	async function fetchEdgeData(projectId: string) {
 		try {
 			const res = await fetch(`/api/take-edges?projectId=${encodeURIComponent(projectId)}`);
 			if (res.ok) {
-				const { counts } = await res.json();
+				const { counts, edges } = await res.json();
 				variationCounts = new Map(Object.entries(counts as Record<string, number>));
+
+				// Build parentEdges map: childAssetId → parentAssetId
+				const parents = new Map<string, string>();
+				for (const edge of edges as Array<{ parentAssetId: string; childAssetId: string }>) {
+					parents.set(edge.childAssetId, edge.parentAssetId);
+				}
+				parentEdges = parents;
 			}
 		} catch {
-			// Non-critical — counts will just show 0
+			// Non-critical — badges will just not show
 		}
 	}
 
@@ -146,6 +155,8 @@
 				// Update variation count for parent
 				const current = variationCounts.get(parentAssetId) ?? 0;
 				variationCounts = new Map(variationCounts).set(parentAssetId, current + 1);
+				// Update parent edge for child
+				parentEdges = new Map(parentEdges).set(childAssetId, parentAssetId);
 			}
 		} catch {
 			// Non-critical — edge just won't be tracked
@@ -373,6 +384,7 @@
 					onCreateVariation={handleCreateVariation}
 					onCoverRestyle={handleCoverRestyle}
 					{variationCounts}
+					{parentEdges}
 				/>
 			</section>
 

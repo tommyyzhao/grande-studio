@@ -26,6 +26,14 @@
 		onExport?: (asset: BlockAsset) => void;
 		/** Number of child variations derived from this block */
 		variationCount?: number;
+		/** Parent asset ID if this block is derived from another */
+		parentAssetId?: string | null;
+		/** Parent asset title for "Derived from" badge */
+		parentTitle?: string | null;
+		/** Callback to scroll to and highlight the parent block */
+		onScrollToParent?: (parentAssetId: string) => void;
+		/** Callback to scroll to child variations of this block */
+		onScrollToVariations?: (assetId: string) => void;
 	}
 
 	let {
@@ -37,7 +45,11 @@
 		onCoverRestyle,
 		onCreateVariation,
 		onExport,
-		variationCount = 0
+		variationCount = 0,
+		parentAssetId = null,
+		parentTitle = null,
+		onScrollToParent,
+		onScrollToVariations
 	}: Props = $props();
 
 	// ─── Waveform ────────────────────────────────────────────────────────
@@ -267,9 +279,13 @@
 		</div>
 		<div class="flex shrink-0 items-center gap-1.5">
 			{#if variationCount > 0}
-				<span class="rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-700 dark:text-blue-400">
+				<button
+					class="rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-700 hover:bg-blue-500/20 dark:text-blue-400"
+					onclick={() => onScrollToVariations?.(asset.id)}
+					title="Scroll to variations"
+				>
 					{variationCount} {variationCount === 1 ? 'variation' : 'variations'}
-				</span>
+				</button>
 			{/if}
 			<span
 				class="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-[10px] font-medium"
@@ -278,6 +294,18 @@
 			</span>
 		</div>
 	</div>
+
+	<!-- Derived from badge -->
+	{#if parentAssetId && parentTitle}
+		<button
+			class="text-muted-foreground hover:text-foreground flex items-center gap-1 text-[11px] hover:underline"
+			onclick={() => onScrollToParent?.(parentAssetId)}
+			title="Scroll to parent block"
+		>
+			<GitBranch class="size-3 shrink-0" />
+			<span>Derived from: <span class="font-medium">{parentTitle}</span></span>
+		</button>
+	{/if}
 
 	<!-- Info row: duration + prompt summary -->
 	<div class="flex flex-col gap-1">

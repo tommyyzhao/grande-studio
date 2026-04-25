@@ -82,8 +82,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 /**
  * GET /api/take-edges?projectId=...
- * Get variation counts (children per parent asset) for a project.
- * Returns: { counts: Record<parentAssetId, number> }
+ * Get variation counts and edge data for a project.
+ * Returns: { counts: Record<parentAssetId, number>, edges: Array<{ parentAssetId, childAssetId, branchType }> }
  */
 export const GET: RequestHandler = async ({ url, locals }) => {
 	if (!locals.user) {
@@ -97,11 +97,12 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 
 	const db = getDb();
 
-	const rows = await withRLS(db, locals.user.id, async (tx) => {
+	const edgeRows = await withRLS(db, locals.user.id, async (tx) => {
 		return tx
 			.select({
 				parentAssetId: takeEdges.parentAssetId,
-				count: sql<number>`count(*)::int`
+				childAssetId: takeEdges.childAssetId,
+				branchType: takeEdges.branchType
 			})
 			.from(takeEdges)
 			.where(
@@ -109,14 +110,14 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 					eq(takeEdges.projectId, projectId),
 					isNull(takeEdges.deletedAt)
 				)
-			)
-			.groupBy(takeEdges.parentAssetId);
+			);
 	});
 
+	// Build counts from edges
 	const counts: Record<string, number> = {};
-	for (const row of rows) {
-		counts[row.parentAssetId] = row.count;
+	for (const row of edgeRows) {
+		counts[row.parentAssetId] = (counts[row.parentAssetId] ?? 0) + 1;
 	}
 
-	return json({ counts });
+	return json({ counts, edges: edgeRows });
 };
