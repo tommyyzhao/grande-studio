@@ -370,9 +370,54 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 	}
 
 	async function play(assetId?: string): Promise<void> {
-		const targetId = assetId ?? activeAssetId;
+		// Arrangement mode: when no explicit assetId and clips with loaded buffers exist,
+		// prefer arrangement playback (transport bar calls play() without args)
+		if (!assetId) {
+			const clipsWithAssets = Array.from(clips.entries()).filter(
+				([, c]) => c.assetId !== null && buffers.has(c.assetId!)
+			);
+
+			if (clipsWithAssets.length > 0) {
+				const ctx = getContext();
+				if (ctx.state === 'suspended') {
+					await ctx.resume();
+				}
+
+				// Stop any single-asset source before entering arrangement mode
+				stopSource();
+				activeAssetId = null;
+				stopAllClipSources();
+				clearEndTimer();
+
+				const transportTime = playbackOffset;
+				for (const [clipId, clip] of clipsWithAssets) {
+					scheduleClipSource(ctx, clipId, clip, transportTime);
+				}
+				updateAllClipRouting();
+
+				playing = true;
+				playbackStartedAt = ctx.currentTime;
+
+				// Schedule transport auto-stop at arrangement end
+				const duration = getArrangementDuration();
+				const remaining = duration - transportTime;
+				if (remaining > 0) {
+					arrangementEndTimer = setTimeout(() => {
+						arrangementEndTimer = null;
+						if (playing) {
+							stopAllClipSources();
+							playing = false;
+							playbackOffset = 0;
+						}
+					}, remaining * 1000);
+				}
+				return;
+			}
+		}
 
 		// Single-asset mode
+		const targetId = assetId ?? activeAssetId;
+
 		if (targetId) {
 			const buffer = buffers.get(targetId);
 			if (!buffer) {
@@ -390,6 +435,9 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 			}
 
 			stopSource();
+			// Stop any arrangement playback when entering single-asset mode
+			stopAllClipSources();
+			clearEndTimer();
 
 			const offset = Math.min(Math.max(0, playbackOffset), buffer.duration);
 			playbackOffset = offset;
@@ -397,45 +445,6 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 			playing = true;
 
 			scheduleSource(ctx, buffer, offset);
-			return;
-		}
-
-		// Clip arrangement mode: schedule clips that have loaded assets
-		const clipsWithAssets = Array.from(clips.entries()).filter(
-			([, c]) => c.assetId !== null && buffers.has(c.assetId)
-		);
-
-		if (clipsWithAssets.length > 0) {
-			const ctx = getContext();
-			if (ctx.state === 'suspended') {
-				await ctx.resume();
-			}
-
-			stopAllClipSources();
-			clearEndTimer();
-
-			const transportTime = playbackOffset;
-			for (const [clipId, clip] of clipsWithAssets) {
-				scheduleClipSource(ctx, clipId, clip, transportTime);
-			}
-			updateAllClipRouting();
-
-			playing = true;
-			playbackStartedAt = ctx.currentTime;
-
-			// Schedule transport auto-stop at arrangement end
-			const duration = getArrangementDuration();
-			const remaining = duration - transportTime;
-			if (remaining > 0) {
-				arrangementEndTimer = setTimeout(() => {
-					arrangementEndTimer = null;
-					if (playing) {
-						stopAllClipSources();
-						playing = false;
-						playbackOffset = 0;
-					}
-				}, remaining * 1000);
-			}
 			return;
 		}
 
