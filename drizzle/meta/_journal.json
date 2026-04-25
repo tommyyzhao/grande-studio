@@ -8,6 +8,13 @@
       "when": 1777079664253,
       "tag": "0000_organic_red_hulk",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777079785464,
+      "tag": "0001_oval_sue_storm",
+      "breakpoints": true
     }
   ]
 }

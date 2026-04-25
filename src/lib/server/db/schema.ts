@@ -7,8 +7,11 @@ import {
 	jsonb,
 	numeric,
 	integer,
-	index
+	boolean,
+	index,
+	check
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 // ─── projects ───────────────────────────────────────────────────────────────
 export const projects = pgTable('projects', {
@@ -70,5 +73,76 @@ export const audioAssets = pgTable(
 	(table) => [
 		index('audio_assets_owner_id_idx').on(table.ownerId),
 		index('audio_assets_project_id_idx').on(table.projectId)
+	]
+);
+
+// ─── arrangement_clips ─────────────────────────────────────────────────────
+export const arrangementClips = pgTable(
+	'arrangement_clips',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		projectId: uuid('project_id')
+			.notNull()
+			.references(() => projects.id),
+		ownerId: uuid('owner_id').notNull(),
+		assetId: uuid('asset_id')
+			.notNull()
+			.references(() => audioAssets.id),
+		startTimeSec: numeric('start_time_sec').notNull().default('0'),
+		trimStartSec: numeric('trim_start_sec').notNull().default('0'),
+		trimEndSec: numeric('trim_end_sec'),
+		clipDurationSec: numeric('clip_duration_sec').notNull(),
+		gainDb: numeric('gain_db').notNull().default('0'),
+		muted: boolean('muted').notNull().default(false),
+		soloed: boolean('soloed').notNull().default(false),
+		layerOrder: integer('layer_order').notNull().default(0),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+		deletedAt: timestamp('deleted_at', { withTimezone: true })
+	},
+	(table) => [
+		index('arrangement_clips_owner_id_idx').on(table.ownerId),
+		index('arrangement_clips_project_id_idx').on(table.projectId),
+		index('arrangement_clips_asset_id_idx').on(table.assetId)
+	]
+);
+
+// ─── take_edges ────────────────────────────────────────────────────────────
+export const branchTypeEnum = [
+	'prompt_variation',
+	'lyric_edit',
+	'instrumental_variant',
+	'cover_restyle',
+	'reference_from_asset',
+	'manual_duplicate',
+	'other'
+] as const;
+export type BranchType = (typeof branchTypeEnum)[number];
+
+export const takeEdges = pgTable(
+	'take_edges',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		projectId: uuid('project_id')
+			.notNull()
+			.references(() => projects.id),
+		ownerId: uuid('owner_id').notNull(),
+		parentAssetId: uuid('parent_asset_id')
+			.notNull()
+			.references(() => audioAssets.id),
+		childAssetId: uuid('child_asset_id')
+			.notNull()
+			.references(() => audioAssets.id),
+		branchType: text('branch_type').notNull().$type<BranchType>(),
+		branchPrompt: text('branch_prompt'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		deletedAt: timestamp('deleted_at', { withTimezone: true })
+	},
+	(table) => [
+		index('take_edges_owner_id_idx').on(table.ownerId),
+		index('take_edges_project_id_idx').on(table.projectId),
+		index('take_edges_parent_asset_id_idx').on(table.parentAssetId),
+		index('take_edges_child_asset_id_idx').on(table.childAssetId),
+		check('take_edges_no_self_edge', sql`${table.parentAssetId} <> ${table.childAssetId}`)
 	]
 );
