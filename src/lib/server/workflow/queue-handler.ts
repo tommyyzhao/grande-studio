@@ -1,13 +1,32 @@
 import { createLocalDb, createNeonDb } from '$lib/server/db';
+import { createMiniMaxAdapter } from '$lib/providers/minimax/adapter';
+import { createR2StorageService } from '$lib/services/r2-storage';
 import { runGenerationWorkflow } from './generation-workflow';
-import type { GenerationQueueMessage, MessageBatchLike } from './types';
+import type { GenerationQueueMessage, MessageBatchLike, WorkflowDeps, WorkflowEnv } from './types';
 
 /**
- * Creates a database instance from the DATABASE_URL environment variable.
+ * Builds workflow dependencies from environment bindings.
+ * Throws if required env values are missing.
  */
-function getDb() {
-	const dbUrl = process.env.DATABASE_URL ?? '';
-	return dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
+function buildWorkflowDeps(env?: WorkflowEnv): WorkflowDeps {
+	const dbUrl = env?.DATABASE_URL ?? process.env.DATABASE_URL ?? '';
+	const db = dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
+
+	const apiKey = env?.MINIMAX_API_KEY ?? process.env.MINIMAX_API_KEY;
+	if (!apiKey) {
+		throw new Error('MINIMAX_API_KEY is required for generation workflow');
+	}
+	const provider = createMiniMaxAdapter(apiKey);
+
+	const bucket = env?.AUDIO_BUCKET;
+	if (!bucket) {
+		throw new Error('AUDIO_BUCKET binding is required for generation workflow');
+	}
+	const signingSecret = env?.R2_SIGNING_SECRET ?? process.env.R2_SIGNING_SECRET ?? '';
+	const baseUrl = env?.BETTER_AUTH_URL ?? process.env.BETTER_AUTH_URL ?? '';
+	const r2 = createR2StorageService(bucket, signingSecret, baseUrl);
+
+	return { db, provider, r2 };
 }
 
 /**
@@ -15,10 +34,11 @@ function getDb() {
  * Runs the generation workflow and propagates errors for retry handling.
  */
 export async function processGenerationMessage(
-	message: GenerationQueueMessage
+	message: GenerationQueueMessage,
+	env?: WorkflowEnv
 ): Promise<void> {
-	const db = getDb();
-	const result = await runGenerationWorkflow(message, { db });
+	const deps = buildWorkflowDeps(env);
+	const result = await runGenerationWorkflow(message, deps);
 
 	if (!result.ok) {
 		throw new Error(
@@ -40,16 +60,19 @@ export async function processGenerationMessage(
  * ```ts
  * export default {
  *   fetch: svelteKitHandler,
- *   queue: handleGenerationQueue
+ *   queue(batch, env, ctx) {
+ *     return handleGenerationQueue(batch, env);
+ *   }
  * };
  * ```
  */
 export async function handleGenerationQueue(
-	batch: MessageBatchLike<GenerationQueueMessage>
+	batch: MessageBatchLike<GenerationQueueMessage>,
+	env?: WorkflowEnv
 ): Promise<void> {
 	for (const msg of batch.messages) {
 		try {
-			await processGenerationMessage(msg.body);
+			await processGenerationMessage(msg.body, env);
 			msg.ack();
 		} catch (error) {
 			console.error(

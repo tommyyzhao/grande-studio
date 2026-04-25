@@ -1,5 +1,8 @@
 import type { JobType, Provider } from '$lib/server/db/schema';
 import type { Database } from '$lib/server/db';
+import type { MusicProvider } from '$lib/providers/types';
+import type { R2StorageService } from '$lib/services/r2-storage';
+import type { R2BucketLike } from '$lib/services/r2-storage';
 
 // ─── Queue Message ────────────────────────────────────────────────────────────
 
@@ -32,11 +35,24 @@ export interface MessageBatchLike<T = unknown> {
 	retryAll(): void;
 }
 
+// ─── Workflow Environment ────────────────────────────────────────────────────
+// Environment bindings/vars available to the queue handler (Cloudflare Workers env)
+
+export interface WorkflowEnv {
+	DATABASE_URL?: string;
+	MINIMAX_API_KEY?: string;
+	R2_SIGNING_SECRET?: string;
+	BETTER_AUTH_URL?: string;
+	AUDIO_BUCKET?: R2BucketLike;
+}
+
 // ─── Workflow Dependencies ────────────────────────────────────────────────────
 
 /** Dependencies injected into the generation workflow */
 export interface WorkflowDeps {
 	db: Database;
+	provider: MusicProvider;
+	r2: R2StorageService;
 }
 
 // ─── Workflow Result ──────────────────────────────────────────────────────────
