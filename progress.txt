@@ -1211,3 +1211,15 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - Inline confirmation pattern (state toggle on card → Cancel/Remove buttons) avoids needing a shadcn alert-dialog component
   - `{#each ... as clip, i}` provides loop index for `isFirst`/`isLast` boundary checks on layer order controls
 ---
+
+## 2026-04-25 - US-052
+- What was implemented: Wired transport bar to audio engine for arrangement playback. Fixed play() priority so arrangement mode is preferred over single-asset resume when clips exist. Added mutual exclusion between single-asset and arrangement playback modes.
+- Files changed:
+  - `src/lib/audio-engine/engine.ts` — Restructured `play()` method: arrangement mode check moved before single-asset mode; `stopSource()` + `activeAssetId = null` when entering arrangement mode; `stopAllClipSources()` + `clearEndTimer()` when entering single-asset mode
+- **Learnings for future iterations:**
+  - `play()` without args now: (1) checks for arrangement clips first, (2) falls back to `activeAssetId` single-asset resume only if no clips exist
+  - Block card preview calls `play(assetId)` with explicit ID → always enters single-asset mode; transport bar calls `play()` without args → enters arrangement mode when clips exist
+  - When switching between playback modes, always stop the other mode's sources to prevent audio overlap (`stopSource()` for single-asset, `stopAllClipSources()` for arrangement)
+  - The transport bar component (`transport-bar.svelte`) was already fully wired from US-041 — this story's main change was fixing the engine's play priority
+  - Pre-existing typecheck errors in `src/lib/components/ui/button/index.ts` (shadcn-svelte ButtonProps/ButtonSize/ButtonVariant exports) — not related to this story
+---
