@@ -1,11 +1,24 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { authClient } from '$lib/auth-client';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import GeneratePanel from '$lib/components/generate-panel.svelte';
+	import TransportBar from '$lib/components/transport-bar.svelte';
+	import { createAudioEngine } from '$lib/audio-engine/engine';
+	import { createArrangementEngineBridge } from '$lib/stores/arrangement-engine-bridge.svelte';
+	import { arrangementStore } from '$lib/stores/arrangement.svelte';
 
 	let { data } = $props();
+
+	// ─── Audio engine ────────────────────────────────────────────────────
+	const audioEngine = createAudioEngine();
+	createArrangementEngineBridge(audioEngine, arrangementStore);
+
+	onDestroy(() => {
+		audioEngine.dispose();
+	});
 
 	// ─── Auth state ──────────────────────────────────────────────────────
 	let signingOut = $state(false);
@@ -137,17 +150,5 @@
 	</main>
 
 	<!-- ═══ Transport Bar ═══ -->
-	<footer class="border-border flex items-center justify-between border-t px-4 py-2">
-		<div class="flex items-center gap-2">
-			<Button variant="outline" size="sm" disabled>Play</Button>
-			<Button variant="outline" size="sm" disabled>Pause</Button>
-			<Button variant="outline" size="sm" disabled>Stop</Button>
-		</div>
-		<div class="text-muted-foreground flex items-center gap-2 text-xs">
-			<span>0:00</span>
-			<span>/</span>
-			<span>0:00</span>
-		</div>
-		<Button variant="outline" size="sm" disabled>Export</Button>
-	</footer>
+	<TransportBar engine={audioEngine} />
 </div>
