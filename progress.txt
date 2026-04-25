@@ -109,6 +109,12 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - `stopAllClipSources()` cleans up all clip source nodes — called by stop(), pause(), and indirectly by dispose()
 - `ensureGainNode()` is called during scheduling to create GainNode for clips that didn't have gain/mute/solo set prior
 - After scheduling clips, `updateAllClipRouting()` must be called to connect newly-created GainNodes to destination
+- `ClipMixState.sourceNodes` is an array (not nullable single) — looping schedules multiple `AudioBufferSourceNode`s back-to-back
+- `setClipLoop(clipId, clipDurationSec)` sets total playback duration; looping activates when `clipDurationSec > trimmedDuration`
+- `setArrangement(clips)` bulk-configures all clips, replacing existing state; `removeClip(clipId)` removes one clip incrementally
+- `ArrangementClipState` exported from engine.ts: clipId, assetId, startTimeSec, trimStartSec, trimEndSec, clipDurationSec, gainDb, muted, soloed, layerOrder
+- `arrangementDuration` getter: max(startTimeSec + effectiveDuration) across all clips — uses clipDurationSec when set, buffer duration as fallback
+- Transport auto-stop in arrangement mode: `setTimeout(remaining * 1000)` sets playing=false and resets offset at arrangement end; timer cleared on pause/stop/dispose
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -764,4 +770,47 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - `updateAllClipRouting()` after scheduling connects any newly-created GainNodes to destination (default: unmuted + not soloed = connected)
   - `stopAllClipSources()` iterates all clips, nullifies `onended`, stops, disconnects source nodes — same pattern as `stopSource()`
   - For arrangement transport: `playbackOffset` serves as the transport time for clip scheduling, `playbackStartedAt` anchors the AudioContext clock
+---
+
+## 2026-04-25 - US-031
+- Implemented drag-to-extend looping in the audio engine
+- Added `setClipLoop(clipId, clipDurationSec)` to `AudioEngine` interface
+- Added `clipDurationSec: number | null` to `ClipMixState` (null = play trimmed region once, no override)
+- Changed `sourceNode: AudioBufferSourceNode | null` to `sourceNodes: AudioBufferSourceNode[]` to support multiple loop iteration nodes
+- Rewrote `scheduleClipSource()` to handle two modes:
+  - No looping (`clipDurationSec <= trimmedDuration`): single source node, possibly shorter than trimmed region
+  - Looping (`clipDurationSec > trimmedDuration`): schedules multiple `AudioBufferSourceNode`s back-to-back to cover the full duration
+- Looping math: `loopOffset = elapsedInClip % trimmedDuration` determines position within current loop iteration for mid-clip joins
+- Partial loops supported: last source node gets `Math.min(trimmedDuration - loopOffset, remaining)` duration
+- Updated `stopAllClipSources()` to iterate `sourceNodes[]` array instead of single `sourceNode`
+- Added 15 tests: setClipLoop basics (4), exact 2x loop (1), 2.5x partial loop (1), looping with trim (1), looping with offset (1), mid-clip join during different iterations (3), skip fully ended looped clip (1), stop cleanup (1), GainNode routing (1), combined trim+offset+loop (1)
+- All 370 tests pass (15 new), typecheck passes (0 errors, 0 warnings)
+- Files changed: src/lib/audio-engine/engine.ts, src/lib/audio-engine/engine.test.ts
+- **Learnings for future iterations:**
+  - `sourceNodes` is now an array (not nullable single) — all clip source node tracking uses arrays
+  - Looping uses multiple `AudioBufferSourceNode`s scheduled back-to-back; NOT the `AudioBufferSourceNode.loop` property
+  - Mid-clip join with looping: `loopOffset = elapsedInClip % trimmedDuration` computes position within the current loop iteration
+  - `effectiveDuration = clipDurationSec ?? trimmedDuration` — null means no override, use trimmed length
+  - When `clipDurationSec <= trimmedDuration`, no looping occurs; clip plays once for `clipDurationSec` seconds (may be shorter than trimmed region)
+  - All loop source nodes connect through the same per-clip GainNode — mute/solo/gain applies to the entire looped clip
+---
+
+## 2026-04-25 - US-032
+- Implemented synchronized multi-clip playback in the audio engine
+- Added `ArrangementClipState` exported interface: clipId, assetId, startTimeSec, trimStartSec, trimEndSec, clipDurationSec, gainDb, muted, soloed, layerOrder
+- Added `setArrangement(clips: ArrangementClipState[])`: bulk configuration replacing all existing clips; cleans up old GainNodes, stops playback, sets up new ClipMixState entries
+- Added `removeClip(clipId)`: removes a single clip — stops its source nodes, disconnects GainNode, recalculates routing
+- Added `arrangementDuration` getter: computes max(startTimeSec + effectiveDuration) across all clips; uses clipDurationSec if set, falls back to buffer/trimmed duration
+- Implemented transport auto-stop via `setTimeout`: when play() enters arrangement mode, calculates time until arrangement end and schedules a timer to stop transport; timer cleared on pause/stop/dispose
+- Added 25 tests: setArrangement basics (7), play scheduling on shared clock (2), arrangementDuration (5), transport auto-stop (5), removeClip (4), adding/removing while stopped (2)
+- All 395 tests pass (25 new), typecheck passes (0 errors, 0 warnings)
+- Files changed: src/lib/audio-engine/engine.ts, src/lib/audio-engine/engine.test.ts
+- **Learnings for future iterations:**
+  - `setArrangement()` is a full replacement — clears all existing clips and GainNodes before setting up new ones
+  - `removeClip()` is incremental — removes one clip and recalculates routing (important for solo state)
+  - Transport auto-stop uses `setTimeout(remaining * 1000)` — not perfectly synced with AudioContext clock but sufficient for transport state
+  - `clearEndTimer()` called in pause/stop/dispose to prevent stale timer from firing after manual transport control
+  - `arrangementDuration` works without loaded buffers when `clipDurationSec` is set (as it always is via `setArrangement`)
+  - Tests for auto-stop use `vi.useFakeTimers()` / `vi.advanceTimersByTime()` to control setTimeout in vitest
+  - `ArrangementClipState.layerOrder` is stored but not used by the engine — it's for UI display ordering only
 ---

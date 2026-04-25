@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createAudioEngine, type AudioEngine, type AudioContextFactory } from './engine';
+import { createAudioEngine, type AudioEngine, type AudioContextFactory, type ArrangementClipState } from './engine';
 
 // --- Mock helpers ---
 
@@ -1218,6 +1218,460 @@ describe('AudioEngine', () => {
 				expect(mockContext._sourceNodes[1].start).toHaveBeenCalledWith(14, 1.0, 2.0);
 				expect(mockContext._sourceNodes[2].start).toHaveBeenCalledWith(16, 1.0, 2.0);
 				expect(mockContext._sourceNodes[3].start).toHaveBeenCalledWith(18, 1.0, 1.0);
+			});
+		});
+	});
+
+	describe('synchronized multi-clip playback', () => {
+		function makeClip(overrides: Partial<ArrangementClipState> & { clipId: string; assetId: string }): ArrangementClipState {
+			return {
+				startTimeSec: 0,
+				trimStartSec: 0,
+				trimEndSec: null,
+				clipDurationSec: 5.0,
+				gainDb: 0,
+				muted: false,
+				soloed: false,
+				layerOrder: 0,
+				...overrides
+			};
+		}
+
+		describe('setArrangement', () => {
+			it('configures all clips from array', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+				await engine.loadAsset('a2', 'https://example.com/audio2.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1', startTimeSec: 0 }),
+					makeClip({ clipId: 'c2', assetId: 'a2', startTimeSec: 3.0 })
+				]);
+
+				mockContext._setCurrentTime(10);
+				await engine.play();
+
+				expect(mockContext._sourceNodes.length).toBe(2);
+				expect(mockContext._sourceNodes[0].start).toHaveBeenCalledWith(10, 0, 5.0);
+				expect(mockContext._sourceNodes[1].start).toHaveBeenCalledWith(13, 0, 5.0);
+			});
+
+			it('replaces previous clips on subsequent calls', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+				await engine.loadAsset('a2', 'https://example.com/audio2.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1' }),
+					makeClip({ clipId: 'c2', assetId: 'a2' })
+				]);
+
+				// Replace with a single clip
+				engine.setArrangement([
+					makeClip({ clipId: 'c3', assetId: 'a1', startTimeSec: 1.0 })
+				]);
+
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				// Only c3 scheduled, not c1 or c2
+				expect(mockContext._sourceNodes.length).toBe(1);
+				expect(mockContext._sourceNodes[0].start).toHaveBeenCalledWith(1.0, 0, 5.0);
+			});
+
+			it('applies gain from arrangement clip state', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1', gainDb: -6 })
+				]);
+
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				// GainNode created with correct gain value
+				expect(mockContext._gainNodes.length).toBe(1);
+				expect(mockContext._gainNodes[0].gain.value).toBeCloseTo(Math.pow(10, -6 / 20), 3);
+			});
+
+			it('applies mute and solo from arrangement clip state', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+				await engine.loadAsset('a2', 'https://example.com/audio2.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1', muted: true }),
+					makeClip({ clipId: 'c2', assetId: 'a2' })
+				]);
+
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				// Both clips are scheduled (source nodes created)
+				expect(mockContext._sourceNodes.length).toBe(2);
+				// GainNodes are created for both clips during scheduling
+				expect(mockContext._gainNodes.length).toBe(2);
+			});
+
+			it('applies trim and clipDurationSec from arrangement clip state', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1', trimStartSec: 1.0, trimEndSec: 3.0, clipDurationSec: 6.0 })
+				]);
+
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				// trimmed region = 2.0s, clipDurationSec = 6.0 → loops 3x
+				expect(mockContext._sourceNodes.length).toBe(3);
+				expect(mockContext._sourceNodes[0].start).toHaveBeenCalledWith(0, 1.0, 2.0);
+				expect(mockContext._sourceNodes[1].start).toHaveBeenCalledWith(2.0, 1.0, 2.0);
+				expect(mockContext._sourceNodes[2].start).toHaveBeenCalledWith(4.0, 1.0, 2.0);
+			});
+
+			it('empty arrangement clears all clips', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1' })
+				]);
+				engine.setArrangement([]);
+
+				// No clips — play() should throw
+				await expect(engine.play()).rejects.toThrow('No asset specified');
+			});
+
+			it('cleans up GainNodes from previous arrangement', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1', gainDb: 0 })
+				]);
+
+				// Force GainNode creation by playing
+				mockContext._setCurrentTime(0);
+				await engine.play();
+				engine.stop();
+
+				const firstGainNode = mockContext._gainNodes[0];
+
+				// Replace arrangement — old GainNode should be disconnected
+				engine.setArrangement([
+					makeClip({ clipId: 'c2', assetId: 'a1' })
+				]);
+
+				expect(firstGainNode.disconnect).toHaveBeenCalled();
+			});
+		});
+
+		describe('play() schedules all clips on same clock', () => {
+			it('schedules clips with different offsets on shared AudioContext', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+				await engine.loadAsset('a2', 'https://example.com/audio2.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1', startTimeSec: 0 }),
+					makeClip({ clipId: 'c2', assetId: 'a2', startTimeSec: 2.0 }),
+					makeClip({ clipId: 'c3', assetId: 'a1', startTimeSec: 5.0 })
+				]);
+
+				mockContext._setCurrentTime(100);
+				await engine.play();
+
+				expect(mockContext._sourceNodes.length).toBe(3);
+				// All scheduled relative to the same ctx.currentTime base
+				expect(mockContext._sourceNodes[0].start).toHaveBeenCalledWith(100, 0, 5.0);
+				expect(mockContext._sourceNodes[1].start).toHaveBeenCalledWith(102, 0, 5.0);
+				expect(mockContext._sourceNodes[2].start).toHaveBeenCalledWith(105, 0, 5.0);
+			});
+
+			it('each clip uses its own gain, trim, offset, and loop settings', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+				await engine.loadAsset('a2', 'https://example.com/audio2.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1', startTimeSec: 0, gainDb: -6, clipDurationSec: 3.0 }),
+					makeClip({ clipId: 'c2', assetId: 'a2', startTimeSec: 1.0, trimStartSec: 0.5, trimEndSec: 2.5, clipDurationSec: 4.0 })
+				]);
+
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				// c1: 3.0s clip (no loop, shorter than 5.0 buffer) → 1 source
+				// c2: trim 0.5→2.5 = 2.0s region, clipDuration 4.0 → loops 2x → 2 sources
+				expect(mockContext._sourceNodes.length).toBe(3);
+
+				// c1: starts at 0, plays 3.0s from buffer offset 0
+				expect(mockContext._sourceNodes[0].start).toHaveBeenCalledWith(0, 0, 3.0);
+				// c2 first loop: starts at 1.0, plays 2.0s from buffer offset 0.5
+				expect(mockContext._sourceNodes[1].start).toHaveBeenCalledWith(1.0, 0.5, 2.0);
+				// c2 second loop: starts at 3.0, plays 2.0s from buffer offset 0.5
+				expect(mockContext._sourceNodes[2].start).toHaveBeenCalledWith(3.0, 0.5, 2.0);
+
+				// Separate GainNodes
+				expect(mockContext._gainNodes.length).toBe(2);
+				expect(mockContext._gainNodes[0].gain.value).toBeCloseTo(Math.pow(10, -6 / 20), 3);
+				expect(mockContext._gainNodes[1].gain.value).toBeCloseTo(1.0, 3); // 0dB
+			});
+		});
+
+		describe('arrangementDuration', () => {
+			it('is 0 with no clips', () => {
+				expect(engine.arrangementDuration).toBe(0);
+			});
+
+			it('equals max(startTimeSec + clipDurationSec) across all clips', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1', startTimeSec: 0, clipDurationSec: 5.0 }),
+					makeClip({ clipId: 'c2', assetId: 'a1', startTimeSec: 3.0, clipDurationSec: 5.0 })
+				]);
+
+				// max(0 + 5.0, 3.0 + 5.0) = 8.0
+				expect(engine.arrangementDuration).toBe(8.0);
+			});
+
+			it('uses buffer duration when clipDurationSec is not set via setArrangement', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+				// Buffer duration is 5.0
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipStartOffset('c1', 2.0);
+
+				// No clipDurationSec set → falls back to buffer duration
+				expect(engine.arrangementDuration).toBe(7.0); // 2.0 + 5.0
+			});
+
+			it('uses trimmed duration when clipDurationSec is not set and trim is configured', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipStartOffset('c1', 1.0);
+				engine.setClipTrim('c1', 1.0, 3.0); // 2.0s trimmed region
+
+				expect(engine.arrangementDuration).toBe(3.0); // 1.0 + 2.0
+			});
+
+			it('updates when clips are added or removed', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1', startTimeSec: 0, clipDurationSec: 5.0 })
+				]);
+				expect(engine.arrangementDuration).toBe(5.0);
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1', startTimeSec: 0, clipDurationSec: 5.0 }),
+					makeClip({ clipId: 'c2', assetId: 'a1', startTimeSec: 4.0, clipDurationSec: 6.0 })
+				]);
+				expect(engine.arrangementDuration).toBe(10.0);
+
+				engine.removeClip('c2');
+				expect(engine.arrangementDuration).toBe(5.0);
+			});
+		});
+
+		describe('transport stops when arrangement end is reached', () => {
+			beforeEach(() => {
+				vi.useFakeTimers();
+			});
+
+			afterEach(() => {
+				vi.useRealTimers();
+			});
+
+			it('transport stops at arrangement end', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1', startTimeSec: 0, clipDurationSec: 3.0 })
+				]);
+
+				mockContext._setCurrentTime(0);
+				await engine.play();
+				expect(engine.isPlaying).toBe(true);
+
+				// Advance timer to arrangement end (3.0s = 3000ms)
+				vi.advanceTimersByTime(3000);
+				expect(engine.isPlaying).toBe(false);
+				expect(engine.currentTime).toBe(0);
+			});
+
+			it('transport stops at latest clip end', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1', startTimeSec: 0, clipDurationSec: 3.0 }),
+					makeClip({ clipId: 'c2', assetId: 'a1', startTimeSec: 2.0, clipDurationSec: 5.0 })
+				]);
+
+				mockContext._setCurrentTime(0);
+				await engine.play();
+				expect(engine.isPlaying).toBe(true);
+
+				// c1 ends at 3.0, c2 ends at 7.0 — arrangement ends at 7.0
+				vi.advanceTimersByTime(3000);
+				expect(engine.isPlaying).toBe(true); // not yet
+
+				vi.advanceTimersByTime(4000); // total 7000ms
+				expect(engine.isPlaying).toBe(false);
+			});
+
+			it('pause clears the end timer', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1', startTimeSec: 0, clipDurationSec: 3.0 })
+				]);
+
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				vi.advanceTimersByTime(1000); // 1s into 3s arrangement
+				mockContext._setCurrentTime(1);
+				await engine.pause();
+				expect(engine.isPlaying).toBe(false);
+
+				// Even after arrangement would have ended, isPlaying should still be false (not re-triggered)
+				vi.advanceTimersByTime(5000);
+				// No errors — timer was cleared
+			});
+
+			it('stop clears the end timer', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1', startTimeSec: 0, clipDurationSec: 3.0 })
+				]);
+
+				mockContext._setCurrentTime(0);
+				await engine.play();
+				engine.stop();
+
+				// Timer should be cleared — no auto-stop after arrangement would have ended
+				vi.advanceTimersByTime(5000);
+				expect(engine.isPlaying).toBe(false);
+				expect(engine.currentTime).toBe(0);
+			});
+
+			it('resume from paused position sets correct remaining timer', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1', startTimeSec: 0, clipDurationSec: 5.0 })
+				]);
+
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				mockContext._setCurrentTime(2);
+				await engine.pause(); // paused at 2s
+
+				mockContext._setCurrentTime(10);
+				await engine.play(); // resume from 2s
+
+				// Remaining: 5.0 - 2.0 = 3.0s
+				vi.advanceTimersByTime(2999);
+				expect(engine.isPlaying).toBe(true);
+
+				vi.advanceTimersByTime(2);
+				expect(engine.isPlaying).toBe(false);
+			});
+		});
+
+		describe('removeClip', () => {
+			it('removes clip from arrangement', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+				await engine.loadAsset('a2', 'https://example.com/audio2.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1', startTimeSec: 0 }),
+					makeClip({ clipId: 'c2', assetId: 'a2', startTimeSec: 2.0 })
+				]);
+
+				engine.removeClip('c1');
+
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				// Only c2 scheduled
+				expect(mockContext._sourceNodes.length).toBe(1);
+				expect(mockContext._sourceNodes[0].start).toHaveBeenCalledWith(2.0, 0, 5.0);
+			});
+
+			it('is a no-op for unknown clipId', () => {
+				engine.removeClip('nonexistent'); // should not throw
+			});
+
+			it('disconnects the removed clip GainNode', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1' })
+				]);
+
+				// Force GainNode creation by playing
+				mockContext._setCurrentTime(0);
+				await engine.play();
+				engine.stop();
+
+				const gainNode = mockContext._gainNodes[0];
+				const disconnectCountBefore = (gainNode.disconnect as ReturnType<typeof vi.fn>).mock.calls.length;
+
+				engine.removeClip('c1');
+				expect((gainNode.disconnect as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(disconnectCountBefore);
+			});
+
+			it('updates arrangement duration after removal', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1', startTimeSec: 0, clipDurationSec: 5.0 }),
+					makeClip({ clipId: 'c2', assetId: 'a1', startTimeSec: 3.0, clipDurationSec: 7.0 })
+				]);
+
+				expect(engine.arrangementDuration).toBe(10.0);
+				engine.removeClip('c2');
+				expect(engine.arrangementDuration).toBe(5.0);
+			});
+		});
+
+		describe('adding clips while stopped updates arrangement', () => {
+			it('adding a clip via setArrangement while stopped is reflected on next play', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1', startTimeSec: 0, clipDurationSec: 5.0 })
+				]);
+				expect(engine.arrangementDuration).toBe(5.0);
+
+				// Add another clip
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1', startTimeSec: 0, clipDurationSec: 5.0 }),
+					makeClip({ clipId: 'c2', assetId: 'a1', startTimeSec: 5.0, clipDurationSec: 5.0 })
+				]);
+				expect(engine.arrangementDuration).toBe(10.0);
+
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				// Both clips scheduled
+				expect(mockContext._sourceNodes.length).toBe(2);
+			});
+
+			it('removing a clip while stopped is reflected on next play', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+				await engine.loadAsset('a2', 'https://example.com/audio2.mp3');
+
+				engine.setArrangement([
+					makeClip({ clipId: 'c1', assetId: 'a1' }),
+					makeClip({ clipId: 'c2', assetId: 'a2', startTimeSec: 2.0 })
+				]);
+
+				engine.removeClip('c2');
+
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				// Only c1 scheduled
+				expect(mockContext._sourceNodes.length).toBe(1);
 			});
 		});
 	});

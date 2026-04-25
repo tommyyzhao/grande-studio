@@ -575,7 +575,7 @@
         "Typecheck passes"
       ],
       "priority": 31,
-      "passes": false,
+      "passes": true,
       "notes": "V1 does not guarantee seamless beat-perfect loops. DAW-standard drag-to-extend behavior."
     },
     {
@@ -592,7 +592,7 @@
         "Typecheck passes"
       ],
       "priority": 32,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
