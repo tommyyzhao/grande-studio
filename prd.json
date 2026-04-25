@@ -908,7 +908,7 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 49,
-      "passes": false,
+      "passes": true,
       "notes": "DAW-standard drag-to-extend behavior. Arrangement length = max(start + clip_duration) across all clips. Always finite."
     },
     {
