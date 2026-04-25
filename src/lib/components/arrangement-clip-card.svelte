@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Music, Minus, Plus, Scissors, Volume2, VolumeX, Headphones } from 'lucide-svelte';
+	import { Music, Minus, Plus, Scissors, Volume2, VolumeX, Headphones, Trash2, ChevronUp, ChevronDown } from 'lucide-svelte';
 	import { Button } from '$lib/components/ui/button';
 	import type { ArrangementClipState } from '$lib/audio-engine/engine';
 	import type { ClipUpdate } from '$lib/stores/arrangement.svelte';
@@ -12,9 +12,35 @@
 		assetDurationSec: number | null;
 		/** Callback to update clip fields (persists via arrangement persistence) */
 		onUpdateClip?: (update: ClipUpdate) => void;
+		/** Callback to remove clip (persists immediately) */
+		onRemoveClip?: (clipId: string) => void;
+		/** Callback to move clip up in layer order */
+		onMoveUp?: (clipId: string) => void;
+		/** Callback to move clip down in layer order */
+		onMoveDown?: (clipId: string) => void;
+		/** Whether this clip is first in the list (disables move up) */
+		isFirst?: boolean;
+		/** Whether this clip is last in the list (disables move down) */
+		isLast?: boolean;
 	}
 
-	let { clip, title, assetDurationSec, onUpdateClip }: Props = $props();
+	let { clip, title, assetDurationSec, onUpdateClip, onRemoveClip, onMoveUp, onMoveDown, isFirst = false, isLast = false }: Props = $props();
+
+	// ─── Remove confirmation state ──────────────────────────────────────
+	let confirmingRemove = $state(false);
+
+	function requestRemove() {
+		confirmingRemove = true;
+	}
+
+	function confirmRemove() {
+		confirmingRemove = false;
+		onRemoveClip?.(clip.clipId);
+	}
+
+	function cancelRemove() {
+		confirmingRemove = false;
+	}
 
 	const STEP = 0.5;
 	/** Minimum clip duration when dragging (0.5s) */
@@ -254,7 +280,57 @@
 				<Plus class="size-3.5" />
 			</Button>
 		</div>
+
+		<!-- Layer order controls -->
+		<div class="flex flex-col">
+			<Button
+				variant="ghost"
+				size="icon"
+				class="size-5"
+				disabled={isFirst}
+				onclick={() => onMoveUp?.(clip.clipId)}
+				title="Move clip up"
+			>
+				<ChevronUp class="size-3.5" />
+			</Button>
+			<Button
+				variant="ghost"
+				size="icon"
+				class="size-5"
+				disabled={isLast}
+				onclick={() => onMoveDown?.(clip.clipId)}
+				title="Move clip down"
+			>
+				<ChevronDown class="size-3.5" />
+			</Button>
+		</div>
+
+		<!-- Remove clip button -->
+		<Button
+			variant="ghost"
+			size="icon"
+			class="text-destructive hover:bg-destructive/10 size-7"
+			onclick={requestRemove}
+			title="Remove clip from arrangement"
+		>
+			<Trash2 class="size-3.5" />
+		</Button>
 	</div>
+
+	<!-- Remove confirmation bar -->
+	{#if confirmingRemove}
+		<div class="bg-destructive/10 border-destructive/20 flex items-center justify-between border-t px-3 py-2">
+			<span class="text-destructive text-xs font-medium">Remove this clip?</span>
+			<div class="flex items-center gap-2">
+				<Button variant="ghost" size="sm" class="h-6 text-xs" onclick={cancelRemove}>
+					Cancel
+				</Button>
+				<Button variant="destructive" size="sm" class="h-6 text-xs" onclick={confirmRemove}>
+					Remove
+				</Button>
+			</div>
+		</div>
+	{/if}
 
 	<!-- Gain slider + Mute / Solo toggles -->
 	<div class="border-border flex items-center gap-2 border-t px-3 py-1.5">

@@ -1199,3 +1199,15 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - Native `<input type="range">` with `accent-primary` class works well for simple sliders without installing a shadcn Slider component
   - Use string interpolation in `class=""` attribute for conditional Tailwind classes with opacity modifiers (e.g., `{clip.soloed ? 'bg-primary/10' : 'bg-card'}`) instead of `class:` directives
 ---
+
+## 2026-04-25 - US-051
+- What was implemented: Added remove clip button with inline confirmation and layer order up/down chevron controls to the arrangement clip card
+- Files changed:
+  - `src/lib/components/arrangement-clip-card.svelte` — Added Trash2, ChevronUp, ChevronDown icons; `onRemoveClip`, `onMoveUp`, `onMoveDown`, `isFirst`, `isLast` props; inline remove confirmation UI with Cancel/Remove buttons
+  - `src/routes/+page.svelte` — Added `handleRemoveClip` (calls `arrangementPersistence.removeClip` for immediate DB delete), `handleMoveUp`/`handleMoveDown` (swap adjacent clip IDs and call `arrangementPersistence.reorderClips`); passed `isFirst`/`isLast` derived from loop index to clip cards
+- **Learnings for future iterations:**
+  - `arrangementPersistence.removeClip()` cancels pending debounced updates and immediately persists via DELETE `/api/arrangement?clipId=...`
+  - `arrangementPersistence.reorderClips()` updates store order and schedules debounced layer_order writes for each clip
+  - Inline confirmation pattern (state toggle on card → Cancel/Remove buttons) avoids needing a shadcn alert-dialog component
+  - `{#each ... as clip, i}` provides loop index for `isFirst`/`isLast` boundary checks on layer order controls
+---

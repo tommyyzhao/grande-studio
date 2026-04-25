@@ -204,6 +204,32 @@
 		arrangementPersistence.updateClip(update);
 	}
 
+	// ─── Remove clip handler (immediate persistence) ────────────────────
+	function handleRemoveClip(clipId: string) {
+		arrangementPersistence.removeClip(clipId);
+	}
+
+	// ─── Layer order handlers ───────────────────────────────────────────
+	function handleMoveUp(clipId: string) {
+		const clips = arrangementStore.clips;
+		const idx = clips.findIndex((c) => c.clipId === clipId);
+		if (idx <= 0) return;
+		const orderedIds = clips.map((c) => c.clipId);
+		// Swap with the clip above
+		[orderedIds[idx - 1], orderedIds[idx]] = [orderedIds[idx], orderedIds[idx - 1]];
+		arrangementPersistence.reorderClips(orderedIds);
+	}
+
+	function handleMoveDown(clipId: string) {
+		const clips = arrangementStore.clips;
+		const idx = clips.findIndex((c) => c.clipId === clipId);
+		if (idx < 0 || idx >= clips.length - 1) return;
+		const orderedIds = clips.map((c) => c.clipId);
+		// Swap with the clip below
+		[orderedIds[idx], orderedIds[idx + 1]] = [orderedIds[idx + 1], orderedIds[idx]];
+		arrangementPersistence.reorderClips(orderedIds);
+	}
+
 	// ─── Quota display ──────────────────────────────────────────────────
 	let quotaRemaining = $derived(data.quotaLimit - data.quotaUsed);
 </script>
@@ -286,12 +312,17 @@
 							No clips in arrangement. Use the <strong>+</strong> button on a ready block to add it here.
 						</p>
 					{:else}
-						{#each arrangementStore.clips as clip (clip.clipId)}
+						{#each arrangementStore.clips as clip, i (clip.clipId)}
 							<ArrangementClipCard
 								{clip}
 								title={assetTitles.get(clip.assetId) ?? 'Untitled'}
 								assetDurationSec={assetDurations.get(clip.assetId) ?? null}
 								onUpdateClip={handleUpdateClip}
+								onRemoveClip={handleRemoveClip}
+								onMoveUp={handleMoveUp}
+								onMoveDown={handleMoveDown}
+								isFirst={i === 0}
+								isLast={i === arrangementStore.clips.length - 1}
 							/>
 						{/each}
 					{/if}
