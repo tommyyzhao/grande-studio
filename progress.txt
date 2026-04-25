@@ -3,6 +3,9 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 ---
 
 ## Codebase Patterns
+- Svelte `class:` directive cannot use Tailwind opacity modifiers (e.g. `class:ring-foreground/10={cond}` fails) — use computed class strings with `$derived.by()` instead
+- `BlockAsset` type includes `jobId`, `errorCode`, `lyrics` fields — use `jobId` for SSE tracking and cancel/retry; `errorCode` for error display on failed cards
+- `PendingBlockCard` component at `src/lib/components/pending-block-card.svelte` handles all non-ready states; `BlockCard` at `block-card.svelte` handles ready state — parent conditionally renders based on `asset.status`
 - New shadcn-svelte components may need `WithoutChildrenOrChild` type and/or `WithoutChild` type in `src/lib/utils.ts` — add if typecheck fails after installing components
 - shadcn-svelte v1.2.7 generates `@lucide/svelte/icons/*` imports — project uses `lucide-svelte`, fix imports to `import { Icon } from 'lucide-svelte'`
 - bits-ui v2 uses `child` snippet pattern, NOT `asChild` prop — `{#snippet child({ props })} <Element {...props}> {/snippet}`
@@ -1055,4 +1058,24 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - Long-press for mobile context menu: `setTimeout(500)` on pointerdown, clear on pointerup/leave/cancel, sets dropdown `bind:open` state
   - Block card action callbacks follow `on[Action]?: (asset: BlockAsset) => void` pattern for parent components to wire
   - AudioEngine `play(assetId)` for single-asset preview mode; `hasAsset()` + `loadAsset()` for lazy loading
+---
+
+## 2026-04-25 04:45 - US-044
+- Created `pending-block-card.svelte` component with visual states for all non-ready asset statuses
+- Queued/created: gray card, 'Queued' badge, spinner (Loader2 icon with animate-spin)
+- Generating: gray card, 'Generating...' badge, spinner
+- Receiving audio: blue-highlighted card with ring-blue-500, 'Live' badge with Radio icon, animated bar visualization when isLive=true
+- Persisting: gray card, 'Saving...' badge, spinner
+- Failed: red-tinted card with ring-destructive, 'Failed' badge, error summary text, Retry button
+- Cancel button visible only when status is 'created' or 'queued'
+- Extended `BlockAsset` type with `jobId`, `errorCode`, and `lyrics` fields (all nullable)
+- Error code to user-friendly message mapping for all WorkflowErrorCode values
+- Files changed:
+  - `src/lib/types.ts` — added `jobId`, `errorCode`, `lyrics` fields to BlockAsset
+  - `src/lib/components/pending-block-card.svelte` — new component (200 lines)
+- **Learnings for future iterations:**
+  - Svelte `class:` directive cannot use Tailwind opacity modifiers (`class:ring-foreground/10={...}` fails) — use computed class strings instead
+  - `STATUS_CONFIG` record pattern maps asset status to visual config (label, spinner, card class, badge class) — reusable for future status displays
+  - Component accepts `onRetry` and `onCancel` callbacks — parent wires these to the generate endpoint (retry creates new job, doesn't mutate failed)
+  - `isLive` prop separate from status — comes from SSE store `isAssetLive()`, not from the asset record itself
 ---
