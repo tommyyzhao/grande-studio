@@ -1,5 +1,7 @@
 // See https://svelte.dev/docs/kit/types#app.d.ts
 // for information about these interfaces
+import type { R2BucketLike } from '$lib/services/r2-storage';
+
 declare global {
 	namespace App {
 		// interface Error {}
@@ -22,7 +24,14 @@ declare global {
 		}
 		// interface PageData {}
 		// interface PageState {}
-		// interface Platform {}
+		interface Platform {
+			env: {
+				AUDIO_BUCKET: R2BucketLike;
+			};
+			context: {
+				waitUntil(promise: Promise<unknown>): void;
+			};
+		}
 	}
 }
 
