@@ -1343,3 +1343,19 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - TransportBar now accepts `projectId: string | null` prop for snapshot building
   - `downloadBlob()` utility creates/revokes object URL for clean browser downloads
 ---
+
+## 2026-04-25 - US-060
+- What was implemented: Daily quota display and limit-reached UI
+  - Project header shows "N of 10 remaining today" with red styling when limit reached
+  - Generate button disabled when daily limit reached
+  - "Daily limit reached. Resets at [HH:MM timezone]" message shown in generate panel when limit reached
+  - Quota count updates locally after each successful generation (via offset counter)
+  - Reset time displays midnight UTC in user's local timezone
+- Files changed:
+  - `src/routes/+page.svelte` — Added quotaLocalOffset state, quotaUsedLocal/quotaRemaining/quotaLimitReached/resetTimeDisplay derived values, enhanced header display, passes quota props to GeneratePanel, increments offset in handleGenerated
+  - `src/lib/components/generate-panel.svelte` — Added quotaRemaining, quotaLimit, quotaLimitReached, resetTimeDisplay props; disabled submit when limit reached; added red limit-reached banner above submit button
+- **Learnings for future iterations:**
+  - Svelte 5 "state_referenced_locally" warning: avoid `$state(data.prop)` — use `$state(0)` offset + `$derived(data.prop + offset)` pattern instead so reactivity is maintained when `data` changes
+  - `toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })` converts UTC Date to user's local time with timezone abbreviation
+  - Quota data already loaded in `+page.server.ts` via `checkDailyUsage` — no new API endpoint needed
+---

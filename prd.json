@@ -1108,7 +1108,7 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 60,
-      "passes": false,
+      "passes": true,
       "notes": "Default limit: 10/day for authenticated users."
     },
     {
