@@ -427,5 +427,5 @@
 	</main>
 
 	<!-- ═══ Transport Bar ═══ -->
-	<TransportBar engine={audioEngine} />
+	<TransportBar engine={audioEngine} projectId={data.project?.id ?? null} />
 </div>
