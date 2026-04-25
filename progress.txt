@@ -49,6 +49,10 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - Quota constants: `QUOTA_TTL_MS = 600000` (10 min), `DAILY_LIMIT = 10`
 - `QuotaServiceResult` is `{ ok: true; reservation } | { ok: false; error: string }` — not exceptions
 - Daily usage counted by committed reservations updated after today's midnight UTC
+- Take edge service at `src/lib/services/take-edges.ts` uses same repository pattern as quota service: `TakeEdgeRepository` interface + `createTakeEdgeService(repo)` factory + `createDrizzleTakeEdgeRepository(db)` for Drizzle
+- `TakeEdgeServiceResult` is `{ ok: true; edge } | { ok: false; error: string }` — consistent with QuotaServiceResult pattern
+- Cycle detection uses BFS from child asset following parent→child edges; if proposed parent is reachable, the edge would create a cycle
+- Soft-delete for edges: `softDeleteByAssetId` sets `deletedAt` on all edges where the asset is parent or child; all queries filter by `isNull(deletedAt)`
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -363,4 +367,24 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - Idempotency key is scoped to owner — same key for different owners creates separate reservations
   - Daily usage counts committed reservations where `updatedAt > todayStartUtc` — uses `updatedAt` because that's when the commit happened
   - Constants exported: `QUOTA_TTL_MS = 600000` (10 min), `DAILY_LIMIT = 10`
+---
+
+## 2026-04-24 - US-017
+- Created take edge service at `src/lib/services/take-edges.ts`
+- Repository pattern: `TakeEdgeRepository` interface, `createTakeEdgeService(repo)` factory, `createDrizzleTakeEdgeRepository(db)` Drizzle implementation
+- `createEdge(projectId, ownerId, parentAssetId, childAssetId, branchType, branchPrompt?)`: creates edge with self-edge check and cycle detection
+- Cycle detection: BFS from child following parent→child edges to check if proposed parent is reachable
+- `getChildren(assetId)`: returns active child edges (filtered by `isNull(deletedAt)`)
+- `getParents(assetId)`: returns active parent edges (filtered by `isNull(deletedAt)`)
+- `softDeleteEdgesForAsset(assetId)`: sets `deletedAt` on all edges where asset is parent or child
+- Soft-deleted edges are excluded from cycle detection queries
+- Created test file at `src/lib/services/take-edges.test.ts` with in-memory repository
+- 23 tests covering: edge creation (4), self-edge rejection (1), cycle detection (6 — two-node, three-node, four-node cycles, diamond DAG, linear chain, soft-deleted edges ignored), getChildren (3), getParents (3), softDeleteEdgesForAsset (6 — parent/child/both directions, no edges, unrelated assets, idempotency)
+- All 252 tests pass (23 new), typecheck passes (0 errors)
+- Files changed: src/lib/services/take-edges.ts, src/lib/services/take-edges.test.ts
+- **Learnings for future iterations:**
+  - BFS cycle detection traverses from the proposed child's descendants (not ancestors) — if the proposed parent is found among descendants of the child, adding the edge would close a cycle
+  - `TakeEdgeServiceResult` follows same `{ ok: true/false }` pattern as `QuotaServiceResult`
+  - In-memory test repo must filter by `deletedAt === null` to match Drizzle repo's `isNull(deletedAt)` behavior
+  - `softDeleteByAssetId` handles both parent and child directions — no need for separate calls
 ---
