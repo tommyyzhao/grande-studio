@@ -1,12 +1,33 @@
 <script lang="ts">
 	import favicon from '$lib/assets/favicon.svg';
+	import { goto } from '$app/navigation';
+	import { authClient } from '$lib/auth-client';
+	import { Button } from '$lib/components/ui/button';
 	import '../app.css';
 
-	let { children } = $props();
+	let { data, children } = $props();
+
+	let signingOut = $state(false);
+
+	async function handleSignOut() {
+		signingOut = true;
+		await authClient.signOut();
+		signingOut = false;
+		goto('/signin');
+	}
 </script>
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
 </svelte:head>
+
+{#if data.user}
+	<header class="border-border flex items-center justify-between border-b px-4 py-2">
+		<span class="text-sm font-medium">{data.user.email}</span>
+		<Button variant="ghost" size="sm" disabled={signingOut} onclick={handleSignOut}>
+			{signingOut ? 'Signing out...' : 'Sign out'}
+		</Button>
+	</header>
+{/if}
 
 {@render children()}
