@@ -15,6 +15,13 @@
 				"binding": "GENERATION_QUEUE",
 				"queue": "grande-studio-generation"
 			}
+		],
+		"consumers": [
+			{
+				"queue": "grande-studio-generation",
+				"max_batch_size": 1,
+				"max_retries": 3
+			}
 		]
 	}
 }
