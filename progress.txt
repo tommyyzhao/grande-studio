@@ -125,6 +125,11 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - Arrangement persistence at `src/lib/stores/arrangement-persistence.svelte.ts`: `createArrangementPersistence(store)` wraps store mutations with debounced DB writes (500ms) and immediate deletes
 - Arrangement API at `src/routes/api/arrangement/+server.ts`: GET (load clips), PATCH (update clip fields), DELETE (soft-delete clip) — all RLS-protected
 - Components use `persistence.updateClip()` / `persistence.removeClip()` for persisted mutations; `store.setClips()` for hydration (no persistence)
+- AudioEngine created once at workspace page level (`+page.svelte`), shared via props; disposed on `onDestroy`
+- AudioEngine `currentTime`/`isPlaying` are plain getters — poll with `requestAnimationFrame` in UI components
+- `createArrangementEngineBridge()` must be called in Svelte component context for `$effect` lifecycle
+- lucide-svelte provides icon components: `import { Play, Pause, Square, Download } from 'lucide-svelte'`
+- TransportBar component at `src/lib/components/transport-bar.svelte` — accepts `engine: AudioEngine` prop
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -967,4 +972,39 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - `selectionStart`/`selectionEnd` on the textarea ref give cursor position for insertion; use `requestAnimationFrame` to set cursor after Svelte updates the value
   - `SUPPORTED_STRUCTURE_TAGS` from validateMusicRequest.ts is `as const` — use `(typeof SUPPORTED_STRUCTURE_TAGS)[number]` for type-safe includes check
   - Structure tags are already fully supported in the backend: endpoint accepts `structureTags`, validator checks them, DB stores as `structureTagsJson`, workflow passes them through
+---
+
+## 2026-04-25 03:28 - US-040
+- Implemented cover/re-style mode in generate panel with file upload
+- Added mode toggle (Generate vs Cover / Re-style) using styled button pair
+- In cover mode: file upload input with client-side validation (size, type), XHR-based upload with progress bar, uploaded file display with remove button
+- Upload calls POST /api/upload and receives sourceAssetId
+- Submit sends mode='cover_restyle' with sourceAssetId to /api/generate
+- Lyrics field remains available (optional in cover mode); instrumental toggle hidden in cover mode
+- Feature labeled 'Cover / Re-style' as required
+- Files changed: src/lib/components/generate-panel.svelte
+- **Learnings for future iterations:**
+  - XMLHttpRequest used instead of fetch for upload progress tracking (fetch doesn't support upload progress natively)
+  - File upload validation is done both client-side (immediate UX) and server-side (security)
+  - `bind:this` on native input elements for file input ref; `bind:ref` on shadcn-svelte components
+  - Panel mode toggle uses styled buttons within a bordered container for a tab-like appearance without needing a tabs component
+  - Cover mode skips the `lyricsOptimizer` flag since lyrics are optional in cover/restyle requests (validated server-side)
+---
+
+## 2026-04-25 - US-041
+- Created global transport bar component at `src/lib/components/transport-bar.svelte`
+- Transport bar has play/pause toggle (icon swaps), stop button, current time / arrangement length display (MM:SS), and disabled export button
+- Play/pause/stop buttons wire directly to AudioEngine methods (`play()`, `pause()`, `stop()`)
+- Current time and isPlaying state polled from engine via `requestAnimationFrame` loop
+- Arrangement length derived reactively from `arrangementStore.totalDuration`
+- Created AudioEngine instance in `+page.svelte` and wired arrangement-engine bridge
+- Engine disposed on component destroy via `onDestroy`
+- Uses lucide-svelte icons (Play, Pause, Square, Download) and shadcn-svelte Button with `icon-sm` size
+- Files changed: `src/lib/components/transport-bar.svelte` (new), `src/routes/+page.svelte` (modified)
+- **Learnings for future iterations:**
+  - AudioEngine `currentTime` and `isPlaying` are plain getters, not reactive — poll with `requestAnimationFrame` in Svelte components
+  - AudioEngine is created once at the workspace page level and shared via props (or context for deeper nesting)
+  - `createArrangementEngineBridge()` must be called within a Svelte component context for `$effect` lifecycle
+  - lucide-svelte is installed and provides icon components (Play, Pause, Square, Download, etc.)
+  - shadcn-svelte Button has `icon-sm` (size-8) and `icon-xs` (size-6) variants for icon-only buttons
 ---
