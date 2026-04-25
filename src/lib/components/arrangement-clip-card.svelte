@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Music, Minus, Plus, Scissors } from 'lucide-svelte';
+	import { Music, Minus, Plus, Scissors, Volume2, VolumeX, Headphones } from 'lucide-svelte';
 	import { Button } from '$lib/components/ui/button';
 	import type { ArrangementClipState } from '$lib/audio-engine/engine';
 	import type { ClipUpdate } from '$lib/stores/arrangement.svelte';
@@ -172,10 +172,35 @@
 	function toggleTrim() {
 		trimExpanded = !trimExpanded;
 	}
+
+	// ─── Gain / Mute / Solo controls ────────────────────────────────────
+	/** Gain range: -24 dB to +6 dB */
+	const GAIN_MIN = -24;
+	const GAIN_MAX = 6;
+
+	function handleGainChange(e: Event) {
+		const target = e.target as HTMLInputElement;
+		const newGain = parseFloat(target.value);
+		onUpdateClip?.({ clipId: clip.clipId, gainDb: newGain });
+	}
+
+	function toggleMute() {
+		onUpdateClip?.({ clipId: clip.clipId, muted: !clip.muted });
+	}
+
+	function toggleSolo() {
+		onUpdateClip?.({ clipId: clip.clipId, soloed: !clip.soloed });
+	}
+
+	/** Format gain value for display */
+	function formatGain(db: number): string {
+		if (db === 0) return '0 dB';
+		return `${db > 0 ? '+' : ''}${db.toFixed(1)} dB`;
+	}
 </script>
 
 <div
-	class="bg-card text-card-foreground ring-foreground/10 rounded-lg shadow-xs ring-1"
+	class="rounded-lg shadow-xs ring-1 transition-opacity {clip.soloed ? 'bg-primary/10 text-card-foreground ring-primary/30' : 'bg-card text-card-foreground ring-foreground/10'} {clip.muted && !clip.soloed ? 'opacity-50' : ''}"
 	role="group"
 >
 	<!-- Main row: icon, title, offset, trim toggle -->
@@ -229,6 +254,52 @@
 				<Plus class="size-3.5" />
 			</Button>
 		</div>
+	</div>
+
+	<!-- Gain slider + Mute / Solo toggles -->
+	<div class="border-border flex items-center gap-2 border-t px-3 py-1.5">
+		<!-- Mute toggle -->
+		<Button
+			variant={clip.muted ? 'secondary' : 'ghost'}
+			size="icon"
+			class="size-7"
+			onclick={toggleMute}
+			title={clip.muted ? 'Unmute clip' : 'Mute clip'}
+		>
+			{#if clip.muted}
+				<VolumeX class="size-3.5" />
+			{:else}
+				<Volume2 class="size-3.5" />
+			{/if}
+		</Button>
+
+		<!-- Solo toggle -->
+		<Button
+			variant={clip.soloed ? 'default' : 'ghost'}
+			size="icon"
+			class="size-7"
+			onclick={toggleSolo}
+			title={clip.soloed ? 'Unsolo clip' : 'Solo clip'}
+		>
+			<Headphones class="size-3.5" />
+		</Button>
+
+		<!-- Gain slider -->
+		<input
+			type="range"
+			min={GAIN_MIN}
+			max={GAIN_MAX}
+			step="0.5"
+			value={clip.gainDb}
+			oninput={handleGainChange}
+			class="h-1.5 flex-1 cursor-pointer accent-primary"
+			title="Gain: {formatGain(clip.gainDb)}"
+		/>
+
+		<!-- Gain value label -->
+		<span class="text-muted-foreground w-14 text-right text-xs tabular-nums">
+			{formatGain(clip.gainDb)}
+		</span>
 	</div>
 
 	<!-- Waveform bar with drag-to-extend handle -->
