@@ -11,7 +11,7 @@
 	import { createAudioEngine } from '$lib/audio-engine/engine';
 	import type { ArrangementClipState } from '$lib/audio-engine/engine';
 	import { createArrangementEngineBridge } from '$lib/stores/arrangement-engine-bridge.svelte';
-	import { arrangementStore } from '$lib/stores/arrangement.svelte';
+	import { arrangementStore, type ClipUpdate } from '$lib/stores/arrangement.svelte';
 	import { createArrangementPersistence } from '$lib/stores/arrangement-persistence.svelte';
 	import { sseStore } from '$lib/stores/sse.svelte';
 	import type { BlockAsset } from '$lib/types';
@@ -192,6 +192,11 @@
 		}
 	}
 
+	// ─── Clip update handler ────────────────────────────────────────────
+	function handleUpdateClip(update: ClipUpdate) {
+		arrangementPersistence.updateClip(update);
+	}
+
 	// ─── Quota display ──────────────────────────────────────────────────
 	let quotaRemaining = $derived(data.quotaLimit - data.quotaUsed);
 </script>
@@ -278,6 +283,7 @@
 							<ArrangementClipCard
 								{clip}
 								title={assetTitles.get(clip.assetId) ?? 'Untitled'}
+								onUpdateClip={handleUpdateClip}
 							/>
 						{/each}
 					{/if}
