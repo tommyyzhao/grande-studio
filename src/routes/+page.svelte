@@ -101,6 +101,7 @@
 		prompt: string;
 		lyrics: string | null;
 		parentAssetId: string | null;
+		branchType: 'prompt_variation' | 'cover_restyle' | null;
 	}) {
 		const newBlock: BlockAsset = {
 			id: result.assetId,
@@ -121,13 +122,13 @@
 		assetTitles = new Map(assetTitles).set(result.assetId, newBlock.title);
 		assetDurations = new Map(assetDurations).set(result.assetId, newBlock.durationSec);
 
-		// Create take edge if this was a variation
-		if (result.parentAssetId && data.project?.id) {
-			createTakeEdge(data.project.id, result.parentAssetId, result.assetId, result.prompt);
+		// Create take edge if this was a variation or cover/restyle
+		if (result.parentAssetId && result.branchType && data.project?.id) {
+			createTakeEdge(data.project.id, result.parentAssetId, result.assetId, result.branchType, result.prompt);
 		}
 	}
 
-	async function createTakeEdge(projectId: string, parentAssetId: string, childAssetId: string, branchPrompt: string) {
+	async function createTakeEdge(projectId: string, parentAssetId: string, childAssetId: string, branchType: string, branchPrompt: string) {
 		try {
 			const res = await fetch('/api/take-edges', {
 				method: 'POST',
@@ -136,7 +137,7 @@
 					projectId,
 					parentAssetId,
 					childAssetId,
-					branchType: 'prompt_variation',
+					branchType,
 					branchPrompt
 				})
 			});
@@ -155,6 +156,11 @@
 	// ─── Create variation handler ───────────────────────────────────────
 	function handleCreateVariation(asset: BlockAsset) {
 		generatePanel?.prefill(asset.prompt, asset.lyrics, asset.id);
+	}
+
+	// ─── Cover / Re-style handler ──────────────────────────────────────
+	function handleCoverRestyle(asset: BlockAsset) {
+		generatePanel?.prefillCover(asset.id, asset.title, asset.prompt, asset.lyrics);
 	}
 
 	// ─── Add to arrangement ─────────────────────────────────────────────
@@ -365,6 +371,7 @@
 					engine={audioEngine}
 					onAddToArrangement={handleAddToArrangement}
 					onCreateVariation={handleCreateVariation}
+					onCoverRestyle={handleCoverRestyle}
 					{variationCounts}
 				/>
 			</section>

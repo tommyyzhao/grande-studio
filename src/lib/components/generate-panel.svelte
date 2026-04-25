@@ -16,6 +16,7 @@
 			prompt: string;
 			lyrics: string | null;
 			parentAssetId: string | null;
+			branchType: 'prompt_variation' | 'cover_restyle' | null;
 		}) => void;
 	}
 
@@ -39,6 +40,33 @@
 	}
 
 	function clearVariationMode() {
+		parentAssetId = null;
+	}
+
+	// ─── Cover from existing block (pre-selected source, no upload) ─────
+	let coverSourceTitle = $state<string | null>(null);
+
+	/**
+	 * Switch to cover/re-style mode with an existing R2-backed asset as source.
+	 * Called externally when the user clicks "Cover / Re-style" on a ready block.
+	 */
+	export function prefillCover(assetId: string, assetTitle: string, prefillPrompt?: string | null, prefillLyrics?: string | null) {
+		panelMode = 'cover_restyle';
+		sourceAssetId = assetId;
+		coverSourceTitle = assetTitle;
+		uploadedFile = null;
+		uploadError = '';
+		uploadProgress = 0;
+		prompt = prefillPrompt ?? '';
+		lyrics = prefillLyrics ?? '';
+		instrumental = false;
+		parentAssetId = assetId;
+		errorMessage = '';
+	}
+
+	function clearCoverSource() {
+		coverSourceTitle = null;
+		sourceAssetId = null;
 		parentAssetId = null;
 	}
 
@@ -305,12 +333,16 @@
 			const submittedPrompt = prompt.trim();
 			const submittedLyrics = lyrics.trim() || null;
 			const submittedParentAssetId = parentAssetId;
+			const submittedBranchType = panelMode === 'cover_restyle'
+				? 'cover_restyle' as const
+				: parentAssetId ? 'prompt_variation' as const : null;
 			onGenerated?.({
 				jobId: data.jobId,
 				assetId: data.assetId,
 				prompt: submittedPrompt,
 				lyrics: submittedLyrics,
-				parentAssetId: submittedParentAssetId
+				parentAssetId: submittedParentAssetId,
+				branchType: submittedBranchType
 			});
 
 			prompt = '';
@@ -319,6 +351,7 @@
 			parentAssetId = null;
 			if (panelMode === 'cover_restyle') {
 				clearUploadedFile();
+				coverSourceTitle = null;
 			}
 		} catch (err) {
 			errorMessage = 'Network error. Please try again.';
@@ -384,7 +417,24 @@
 	{#if panelMode === 'cover_restyle'}
 		<div class="flex flex-col gap-1.5">
 			<Label for="source-upload">Source audio file</Label>
-			{#if sourceAssetId && uploadedFile}
+			{#if sourceAssetId && coverSourceTitle}
+				<!-- Pre-selected source from existing block -->
+				<div class="bg-muted/50 flex items-center justify-between rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2">
+					<div class="flex items-center gap-2 overflow-hidden">
+						<span class="text-sm">&#9835;</span>
+						<span class="truncate text-sm font-medium">{coverSourceTitle}</span>
+						<span class="text-muted-foreground text-xs">(existing block)</span>
+					</div>
+					<button
+						type="button"
+						class="text-muted-foreground hover:text-foreground ml-2 shrink-0 text-sm"
+						onclick={clearCoverSource}
+						disabled={submitting}
+					>
+						Remove
+					</button>
+				</div>
+			{:else if sourceAssetId && uploadedFile}
 				<!-- Uploaded file display -->
 				<div class="bg-muted/50 flex items-center justify-between rounded-md border px-3 py-2">
 					<div class="flex items-center gap-2 overflow-hidden">
