@@ -1255,3 +1255,15 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - Variation counts updated optimistically in the client Map after successful edge creation
   - TakeEdgeService's `createDrizzleTakeEdgeRepository` works with the raw db instance (not RLS-wrapped), but the API endpoint uses `withRLS` for the GET query
 ---
+
+## 2026-04-25 - US-055
+- What was implemented: Wired "Cover / Re-style" action from ready block cards to the generate panel with take edge creation
+- Files changed:
+  - `src/lib/components/generate-panel.svelte` — Added `prefillCover(assetId, assetTitle, prompt?, lyrics?)` export that switches to cover mode and pre-selects an existing R2-backed asset as the source (no upload needed). Added `coverSourceTitle` state for displaying pre-selected source. Updated `onGenerated` callback to include `branchType` field. Added UI for showing pre-selected source with blue highlight and "existing block" label.
+  - `src/routes/+page.svelte` — Added `handleCoverRestyle(asset)` handler that calls `generatePanel.prefillCover()`. Wired `onCoverRestyle` prop to BlockList. Updated `createTakeEdge()` to accept dynamic `branchType` parameter instead of hardcoding `'prompt_variation'`. Updated `handleGenerated()` to pass `branchType` through to `createTakeEdge()`.
+- **Learnings for future iterations:**
+  - GeneratePanel now exports both `prefill()` (for variations) and `prefillCover()` (for cover/restyle from existing blocks) — both set `parentAssetId` for take edge creation
+  - `branchType` is determined by the generate panel based on `panelMode`: `'cover_restyle'` for cover mode, `'prompt_variation'` when `parentAssetId` is set in generate mode, `null` for fresh generations
+  - Pre-selected cover source (from existing block) uses `coverSourceTitle` state to distinguish from file-upload flow — both set `sourceAssetId` but display differently in the UI
+  - `clearCoverSource()` clears both the source display and `parentAssetId`, so the take edge won't be created if the user removes the pre-selected source
+---
