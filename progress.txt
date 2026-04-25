@@ -27,6 +27,8 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - BetterAuth reads `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` from `process.env` automatically
 - Auth server at `src/lib/server/auth.ts`; auth client at `src/lib/auth-client.ts`; API route at `src/routes/api/auth/[...all]/+server.ts`
 - `drizzle.config.ts` schema field accepts an array of paths for multiple schema files
+- BetterAuth Svelte client API: `authClient.signUp.email({ email, password, name })` and `authClient.signIn.email({ email, password })` — both return `{ data, error }`
+- shadcn-svelte Card uses namespace import: `import * as Card from '$lib/components/ui/card'`
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -156,4 +158,25 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - `toSvelteKitHandler` from `better-auth/svelte-kit` wraps the auth handler for SvelteKit route handlers
   - `createAuthClient` from `better-auth/svelte` creates a Svelte-aware auth client with nanostore-based reactivity
   - BetterAuth reads BETTER_AUTH_SECRET and BETTER_AUTH_URL from process.env automatically — no need to pass them in config
+---
+
+## 2026-04-24 - US-008
+- Created sign-up page at `/signup` and sign-in page at `/signin`
+- Installed shadcn-svelte card, input, and label components
+- Both pages use shadcn-svelte form components (Card, Input, Label, Button)
+- Sign-up page has email, password, and confirm password fields with validation
+- Sign-in page has email and password fields with validation
+- Form validation: email format (regex), password minimum 8 characters, confirm password match
+- Error messages displayed inline below each field and for server errors
+- Successful sign-up/sign-in redirects to `/` (workspace)
+- Cross-links between pages: "Already have an account? Sign in" / "Don't have an account? Sign up"
+- BetterAuth client `signUp.email()` and `signIn.email()` used for API calls
+- Files changed: src/routes/signup/+page.svelte, src/routes/signin/+page.svelte, src/lib/components/ui/card/*, src/lib/components/ui/input/*, src/lib/components/ui/label/*
+- **Learnings for future iterations:**
+  - BetterAuth Svelte client exposes `authClient.signUp.email({ email, password, name })` and `authClient.signIn.email({ email, password })`
+  - Both return `{ data, error }` — error has `.message` string for display
+  - shadcn-svelte Card uses namespace import: `import * as Card from '$lib/components/ui/card'` then `Card.Root`, `Card.Header`, etc.
+  - shadcn-svelte Input supports `bind:value` and `aria-invalid` for validation states
+  - Use `$derived.by(() => ...)` for validation logic that depends on reactive state
+  - Svelte 5 form handling: use `onsubmit` attribute (not `on:submit`) with `e.preventDefault()`
 ---
