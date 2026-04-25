@@ -335,7 +335,7 @@
         "Typecheck passes"
       ],
       "priority": 18,
-      "passes": false,
+      "passes": true,
       "notes": "Provider URLs must never be stored as canonical audio source. Only R2 object keys are canonical."
     },
     {
@@ -355,7 +355,7 @@
         "Typecheck passes"
       ],
       "priority": 19,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

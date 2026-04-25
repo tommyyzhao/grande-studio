@@ -53,6 +53,14 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - `TakeEdgeServiceResult` is `{ ok: true; edge } | { ok: false; error: string }` — consistent with QuotaServiceResult pattern
 - Cycle detection uses BFS from child asset following parent→child edges; if proposed parent is reachable, the edge would create a cycle
 - Soft-delete for edges: `softDeleteByAssetId` sets `deletedAt` on all edges where the asset is parent or child; all queries filter by `isNull(deletedAt)`
+- R2 storage service at `src/lib/services/r2-storage.ts`: `createR2StorageService(bucket, signingSecret, baseUrl)` factory
+- `R2BucketLike` interface abstracts R2Bucket API — no `@cloudflare/workers-types` dependency needed
+- `buildObjectKey(ownerId, projectId, assetId, ext)` generates canonical R2 object keys: `{ownerId}/{projectId}/{assetId}.{ext}`
+- Signed URLs use HMAC-SHA256 via Web Crypto API; `signUrlParams` and `verifyUrlSignature` are exported for the serving endpoint
+- R2 bucket binding is `AUDIO_BUCKET` in wrangler.jsonc; `App.Platform.env.AUDIO_BUCKET` in SvelteKit
+- Upload endpoint at `src/routes/api/upload/+server.ts`: POST with multipart form data (`file` + `projectId`), validates session/size/type, returns `{ assetId }`
+- Allowed upload MIME types map in upload endpoint: audio/mpeg, audio/mp3, audio/wav, audio/x-wav, audio/wave, audio/mp4, audio/x-m4a, audio/m4a, audio/aac, audio/flac, audio/x-flac
+- Max upload size: 50MB (`50 * 1024 * 1024`)
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -387,4 +395,47 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - `TakeEdgeServiceResult` follows same `{ ok: true/false }` pattern as `QuotaServiceResult`
   - In-memory test repo must filter by `deletedAt === null` to match Drizzle repo's `isNull(deletedAt)` behavior
   - `softDeleteByAssetId` handles both parent and child directions — no need for separate calls
+---
+
+## 2026-04-24 - US-018
+- Created R2 storage service at `src/lib/services/r2-storage.ts`
+- `R2BucketLike` interface abstracts over Cloudflare R2Bucket API (minimal subset: put, get, delete)
+- `R2StorageService` interface: `uploadAudio`, `getSignedUrl`, `deleteObject`
+- `buildObjectKey(ownerId, projectId, assetId, ext)` helper generates `{ownerId}/{projectId}/{assetId}.{ext}` keys
+- `createR2StorageService(bucket, signingSecret, baseUrl)` factory creates service instance
+- Signed URLs use HMAC-SHA256 (Web Crypto API) with `signUrlParams` and `verifyUrlSignature` helpers
+- Signed URL format: `{baseUrl}/api/audio/serve?key=...&expires=...&sig=...` with constant-time signature comparison
+- R2 bucket binding `AUDIO_BUCKET` configured in `wrangler.jsonc` with bucket name `grande-studio-audio`
+- `R2_BUCKET_NAME=grande-studio-audio` added to `.env.example`
+- Updated `app.d.ts` with `App.Platform` interface declaring `env.AUDIO_BUCKET` typed as `R2BucketLike`
+- All 252 tests pass, typecheck passes (0 errors, 0 warnings)
+- Files changed: src/lib/services/r2-storage.ts, wrangler.jsonc, .env.example, src/app.d.ts
+- **Learnings for future iterations:**
+  - `R2BucketLike` at `src/lib/services/r2-storage.ts` is the typed abstraction — avoids needing `@cloudflare/workers-types` package
+  - Signed URLs point to `/api/audio/serve` endpoint (serving endpoint implementation is a separate concern)
+  - `signUrlParams(secret, objectKey, expiresAt)` and `verifyUrlSignature(secret, objectKey, expiresAt, sig)` are exported for use by the serving endpoint
+  - Web Crypto `crypto.subtle` is available in both Cloudflare Workers and Node.js 15+ — no polyfill needed
+  - `app.d.ts` imports `R2BucketLike` type via `import type` — works because the file already has `export {}`
+  - R2 bucket binding name `AUDIO_BUCKET` is the Workers binding name; `grande-studio-audio` is the actual R2 bucket name
+---
+
+## 2026-04-24 - US-019
+- Created POST upload endpoint at `src/routes/api/upload/+server.ts`
+- Validates session (rejects unauthenticated with 401)
+- Validates file size (max 50MB) and file type (MP3, WAV, M4A, FLAC) via MIME type + file extension fallback
+- Parses multipart form data for `file` (File) and `projectId` (string)
+- Creates audio_asset row with source_type='uploaded', provider='local_upload', status='ready'
+- Uploads file to R2 via `createR2StorageService` and sets `r2_object_key` on the asset
+- Returns `{ assetId }` with 201 status on success
+- Clear error messages for all validation failures (size, type, missing fields)
+- Graceful fallback when R2 bucket binding unavailable (local dev without R2)
+- All 252 tests pass, typecheck passes (0 errors, 0 warnings)
+- Files changed: src/routes/api/upload/+server.ts (new)
+- **Learnings for future iterations:**
+  - Upload endpoint requires `projectId` in form data — the caller must know the project ID
+  - MIME type resolution uses a generous map (audio/mpeg, audio/mp3, audio/wav, audio/x-wav, etc.) with file extension fallback
+  - `withRLS(db, userId, fn)` wraps both the insert and update in a single transaction with RLS context
+  - Asset title is derived from filename minus extension: `file.name.replace(/\.[^.]+$/, '')`
+  - R2 bucket may be null in local dev (no Cloudflare Workers runtime) — endpoint logs warning but still creates asset row
+  - SvelteKit `error()` helper throws HttpError — use for all validation failures with `{ message }` body
 ---
