@@ -3,6 +3,9 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 ---
 
 ## Codebase Patterns
+- Workspace lives at root route `/` — `+page.server.ts` handles project find-or-create; `+page.svelte` is the full workspace layout
+- PATCH /api/project endpoint updates project title — uses same `getDb()` + `withRLS` pattern as other endpoints
+- Root layout conditionally hides its header on workspace page via `$page.url.pathname === '/'`
 - vitest works with SvelteKit's vite config out of the box — `npm test` runs `vitest run`, `npm run test:watch` for watch mode
 - MiniMax validator is the single source of truth for request validation: `src/lib/providers/minimax/validateMusicRequest.ts`
 - Supported MiniMax structure tags: [Intro], [Verse], [Verse 1], [Verse 2], [Pre-Chorus], [Chorus], [Hook], [Bridge], [Breakdown], [Solo], [Outro]
@@ -888,4 +891,26 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - Debounce accumulation: changes during the debounce window are merged (`{ ...existing, ...new }`) so only one PATCH is sent per clip per window
   - Drizzle numeric columns return strings; ArrangementClipState uses numbers — conversion in `rowToClipState` uses `Number()` with `|| 0` fallback
   - `flush()` is useful for beforeunload or explicit save triggers
+---
+
+## 2026-04-25 10:13 - US-036
+- Implemented main workspace layout with project header at root route (/)
+- Created server load function that auto-creates default project for first-time authenticated users, loads existing project for returning users, and returns null project for unauthenticated users
+- Project header shows editable title (inline click-to-edit), daily quota remaining (N/10), and sign-out button
+- Layout includes regions: project header, generate panel area (placeholder), asset list area (placeholder), arrangement area (placeholder), transport bar (placeholder)
+- Created PATCH /api/project endpoint for inline title updates
+- Updated root layout to skip its header on workspace page (workspace has its own)
+- Files changed:
+  - src/routes/+page.server.ts (created — project load/create, quota fetch)
+  - src/routes/+page.svelte (rewritten — full workspace layout)
+  - src/routes/+layout.svelte (updated — hide layout header on workspace)
+  - src/routes/api/project/+server.ts (created — PATCH for title update)
+  - prd.json (US-036 passes: true)
+- **Learnings for future iterations:**
+  - Root route (`/`) serves as the workspace — authenticated users see their project, unauthenticated see temp workspace
+  - `+page.server.ts` at root handles project find-or-create logic using `withRLS`
+  - Project title is editable inline via PATCH /api/project — same `getDb()` pattern as other endpoints
+  - Root layout uses `$page.url.pathname === '/'` to skip its header on workspace page
+  - `$state(data.prop)` captures initial value of data — for edit drafts, initialize empty and set in handler instead
+  - Quota display: `data.quotaLimit - data.quotaUsed` gives remaining count
 ---
