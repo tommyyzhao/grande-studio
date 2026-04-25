@@ -127,6 +127,9 @@
 		};
 		blockList?.addBlock(newBlock);
 
+		// Increment local quota counter (server validates independently)
+		quotaLocalOffset += 1;
+
 		// Track metadata for arrangement clip cards
 		assetTitles = new Map(assetTitles).set(result.assetId, newBlock.title);
 		assetDurations = new Map(assetDurations).set(result.assetId, newBlock.durationSec);
@@ -321,7 +324,31 @@
 	}
 
 	// ─── Quota display ──────────────────────────────────────────────────
-	let quotaRemaining = $derived(data.quotaLimit - data.quotaUsed);
+	/** Local offset added to server quota count (incremented after each successful generation) */
+	let quotaLocalOffset = $state(0);
+
+	let quotaUsedLocal = $derived(data.quotaUsed + quotaLocalOffset);
+
+	let quotaRemaining = $derived(data.quotaLimit - quotaUsedLocal);
+	let quotaLimitReached = $derived(quotaUsedLocal >= data.quotaLimit);
+
+	/** Compute midnight UTC displayed in user's local timezone */
+	let resetTimeDisplay = $derived.by(() => {
+		const now = new Date();
+		// Next midnight UTC
+		const midnightUtc = new Date(Date.UTC(
+			now.getUTCFullYear(),
+			now.getUTCMonth(),
+			now.getUTCDate() + 1,
+			0, 0, 0
+		));
+		// Format in user's local timezone
+		return midnightUtc.toLocaleTimeString(undefined, {
+			hour: '2-digit',
+			minute: '2-digit',
+			timeZoneName: 'short'
+		});
+	});
 </script>
 
 <svelte:head>
@@ -357,8 +384,8 @@
 		<div class="flex items-center gap-3">
 			<!-- Daily quota -->
 			{#if data.user}
-				<span class="text-muted-foreground text-xs">
-					{quotaRemaining}/{data.quotaLimit}
+				<span class="text-xs {quotaLimitReached ? 'text-destructive font-medium' : 'text-muted-foreground'}">
+					{quotaRemaining} of {data.quotaLimit} remaining today
 				</span>
 			{/if}
 
@@ -379,7 +406,15 @@
 	<main class="flex min-h-0 flex-1 flex-col">
 		<!-- Generate Panel Area -->
 		<section class="border-border border-b px-4 py-4">
-			<GeneratePanel bind:this={generatePanel} projectId={data.project?.id ?? null} onGenerated={handleGenerated} />
+			<GeneratePanel
+				bind:this={generatePanel}
+				projectId={data.project?.id ?? null}
+				onGenerated={handleGenerated}
+				{quotaRemaining}
+				quotaLimit={data.quotaLimit}
+				{quotaLimitReached}
+				{resetTimeDisplay}
+			/>
 		</section>
 
 		<!-- Scrollable content area: asset list + arrangement -->

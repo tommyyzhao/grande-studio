@@ -10,6 +10,10 @@
 
 	interface Props {
 		projectId: string | null;
+		quotaRemaining?: number;
+		quotaLimit?: number;
+		quotaLimitReached?: boolean;
+		resetTimeDisplay?: string;
 		onGenerated?: (result: {
 			jobId: string;
 			assetId: string;
@@ -20,7 +24,14 @@
 		}) => void;
 	}
 
-	let { projectId, onGenerated }: Props = $props();
+	let {
+		projectId,
+		quotaRemaining = 10,
+		quotaLimit = 10,
+		quotaLimitReached = false,
+		resetTimeDisplay = '',
+		onGenerated
+	}: Props = $props();
 
 	// ─── Variation mode (prefilled from parent asset) ────────────────────
 	let parentAssetId = $state<string | null>(null);
@@ -150,6 +161,7 @@
 	});
 
 	let canSubmit = $derived.by(() => {
+		if (quotaLimitReached) return false;
 		if (promptEmpty || submitting || !projectId) return false;
 		if (panelMode === 'generate' && validationError) return false;
 		if (panelMode === 'cover_restyle') {
@@ -566,6 +578,14 @@
 
 	{#if errorMessage}
 		<p class="text-destructive text-sm">{errorMessage}</p>
+	{/if}
+
+	{#if quotaLimitReached}
+		<div class="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2">
+			<p class="text-sm font-medium text-red-700 dark:text-red-400">
+				Daily limit reached. Resets at {resetTimeDisplay}
+			</p>
+		</div>
 	{/if}
 
 	<div class="flex items-center gap-2">
