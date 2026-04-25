@@ -41,6 +41,13 @@ export interface AudioEngine {
 	setClipMute(clipId: string, muted: boolean): void;
 	/** Set the solo state for a clip */
 	setClipSolo(clipId: string, soloed: boolean): void;
+
+	/** Set the start offset for a clip on the transport timeline (seconds) */
+	setClipStartOffset(clipId: string, startTimeSec: number): void;
+	/** Set the trim region within the source audio buffer */
+	setClipTrim(clipId: string, trimStartSec: number, trimEndSec: number | null): void;
+	/** Associate a clip with a loaded audio asset */
+	setClipAssetId(clipId: string, assetId: string): void;
 }
 
 /** Injectable factory so tests can provide a mock AudioContext */
@@ -71,6 +78,11 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 		soloed: boolean;
 		gainNode: GainNode | null;
 		connectedToDestination: boolean;
+		startTimeSec: number;
+		trimStartSec: number;
+		trimEndSec: number | null;
+		assetId: string | null;
+		sourceNode: AudioBufferSourceNode | null;
 	}
 	const clips = new Map<string, ClipMixState>();
 
@@ -130,7 +142,12 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 				muted: false,
 				soloed: false,
 				gainNode: null,
-				connectedToDestination: false
+				connectedToDestination: false,
+				startTimeSec: 0,
+				trimStartSec: 0,
+				trimEndSec: null,
+				assetId: null,
+				sourceNode: null
 			};
 			clips.set(clipId, clip);
 		}
@@ -159,6 +176,71 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 			} else if (!shouldBeConnected && clip.connectedToDestination) {
 				clip.gainNode.disconnect();
 				clip.connectedToDestination = false;
+			}
+		}
+	}
+
+	function scheduleClipSource(
+		ctx: AudioContext,
+		clipId: string,
+		clip: ClipMixState,
+		transportTime: number
+	): void {
+		if (!clip.assetId) return;
+		const buffer = buffers.get(clip.assetId);
+		if (!buffer) return;
+
+		const trimStart = clip.trimStartSec;
+		const trimEnd = clip.trimEndSec ?? buffer.duration;
+		const trimmedDuration = Math.max(0, trimEnd - trimStart);
+
+		if (trimmedDuration <= 0) return;
+
+		const clipEndTime = clip.startTimeSec + trimmedDuration;
+
+		// Skip clips that have already ended relative to transport
+		if (clipEndTime <= transportTime) return;
+
+		let whenOnCtx: number;
+		let bufferOffset: number;
+		let playDuration: number;
+
+		if (clip.startTimeSec >= transportTime) {
+			// Clip starts in the future
+			whenOnCtx = ctx.currentTime + (clip.startTimeSec - transportTime);
+			bufferOffset = trimStart;
+			playDuration = trimmedDuration;
+		} else {
+			// Transport is mid-clip
+			const elapsed = transportTime - clip.startTimeSec;
+			whenOnCtx = ctx.currentTime;
+			bufferOffset = trimStart + elapsed;
+			playDuration = trimmedDuration - elapsed;
+		}
+
+		if (playDuration <= 0) return;
+
+		const source = ctx.createBufferSource();
+		source.buffer = buffer;
+
+		const gainNode = ensureGainNode(clip);
+		source.connect(gainNode);
+
+		source.start(whenOnCtx, bufferOffset, playDuration);
+		clip.sourceNode = source;
+	}
+
+	function stopAllClipSources(): void {
+		for (const clip of clips.values()) {
+			if (clip.sourceNode) {
+				clip.sourceNode.onended = null;
+				try {
+					clip.sourceNode.stop();
+				} catch {
+					// Already stopped
+				}
+				clip.sourceNode.disconnect();
+				clip.sourceNode = null;
 			}
 		}
 	}
@@ -218,33 +300,60 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 
 	async function play(assetId?: string): Promise<void> {
 		const targetId = assetId ?? activeAssetId;
-		if (!targetId) {
-			throw new Error('No asset specified for playback');
+
+		// Single-asset mode
+		if (targetId) {
+			const buffer = buffers.get(targetId);
+			if (!buffer) {
+				throw new Error(`Asset not loaded: ${targetId}`);
+			}
+
+			// If switching from one asset to another, reset offset
+			if (activeAssetId !== null && targetId !== activeAssetId) {
+				playbackOffset = 0;
+			}
+
+			const ctx = getContext();
+			if (ctx.state === 'suspended') {
+				await ctx.resume();
+			}
+
+			stopSource();
+
+			const offset = Math.min(Math.max(0, playbackOffset), buffer.duration);
+			playbackOffset = offset;
+			activeAssetId = targetId;
+			playing = true;
+
+			scheduleSource(ctx, buffer, offset);
+			return;
 		}
 
-		const buffer = buffers.get(targetId);
-		if (!buffer) {
-			throw new Error(`Asset not loaded: ${targetId}`);
+		// Clip arrangement mode: schedule clips that have loaded assets
+		const clipsWithAssets = Array.from(clips.entries()).filter(
+			([, c]) => c.assetId !== null && buffers.has(c.assetId)
+		);
+
+		if (clipsWithAssets.length > 0) {
+			const ctx = getContext();
+			if (ctx.state === 'suspended') {
+				await ctx.resume();
+			}
+
+			stopAllClipSources();
+
+			const transportTime = playbackOffset;
+			for (const [clipId, clip] of clipsWithAssets) {
+				scheduleClipSource(ctx, clipId, clip, transportTime);
+			}
+			updateAllClipRouting();
+
+			playing = true;
+			playbackStartedAt = ctx.currentTime;
+			return;
 		}
 
-		// If switching from one asset to another, reset offset
-		if (activeAssetId !== null && targetId !== activeAssetId) {
-			playbackOffset = 0;
-		}
-
-		const ctx = getContext();
-		if (ctx.state === 'suspended') {
-			await ctx.resume();
-		}
-
-		stopSource();
-
-		const offset = Math.min(Math.max(0, playbackOffset), buffer.duration);
-		playbackOffset = offset;
-		activeAssetId = targetId;
-		playing = true;
-
-		scheduleSource(ctx, buffer, offset);
+		throw new Error('No asset specified for playback');
 	}
 
 	async function pause(): Promise<void> {
@@ -255,11 +364,13 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 		playing = false;
 
 		stopSource();
+		stopAllClipSources();
 		await context.suspend();
 	}
 
 	function stop(): void {
 		stopSource();
+		stopAllClipSources();
 		playing = false;
 		playbackOffset = 0;
 	}
@@ -304,6 +415,22 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 		updateAllClipRouting();
 	}
 
+	function setClipStartOffset(clipId: string, startTimeSec: number): void {
+		const clip = getOrCreateClipState(clipId);
+		clip.startTimeSec = Math.max(0, startTimeSec);
+	}
+
+	function setClipTrim(clipId: string, trimStartSec: number, trimEndSec: number | null): void {
+		const clip = getOrCreateClipState(clipId);
+		clip.trimStartSec = Math.max(0, trimStartSec);
+		clip.trimEndSec = trimEndSec !== null ? Math.max(0, trimEndSec) : null;
+	}
+
+	function setClipAssetId(clipId: string, assetId: string): void {
+		const clip = getOrCreateClipState(clipId);
+		clip.assetId = assetId;
+	}
+
 	return {
 		loadAsset,
 		unloadAsset,
@@ -325,6 +452,9 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 		},
 		setClipGain,
 		setClipMute,
-		setClipSolo
+		setClipSolo,
+		setClipStartOffset,
+		setClipTrim,
+		setClipAssetId
 	};
 }

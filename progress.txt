@@ -90,6 +90,25 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - SSE audio chunk events: `event: audio-chunk` with `{ jobId, assetId, chunkIndex, data (base64), isFinal }` — separate from `job-status`
 - `KVNamespaceLike` interface at `src/lib/services/live-chunks.ts` follows same abstraction pattern as `R2BucketLike` and `QueueLike`
 - `isAssetLive(assetId)` / `isLiveListening(jobId)` on sseStore for 'Live' indicator in block cards
+- Audio engine at `src/lib/audio-engine/engine.ts`: `createAudioEngine(factory?)` factory, `AudioContextFactory` injectable for testing
+- AudioEngine interface: `loadAsset`, `unloadAsset`, `dispose`, `getContext`, `hasAsset`, `getBuffer`, `resume`, `suspend`
+- AudioContext created lazily on first `getContext()` or `loadAsset()` — respects browser autoplay policy (call from user gesture)
+- Mock AudioContext in tests: use `AudioContextFactory` with mock that tracks state (`_state` variable for state getter)
+- `AudioBufferSourceNode` is one-shot (create new for each play/seek/resume); `scheduleSource()` helper in engine.ts creates and wires them
+- `stopSource()` nullifies `onended` before `.stop()` to prevent natural-end handler firing on intentional stops
+- `currentTime` getter computes position from `AudioContext.currentTime` — no rAF in the headless engine; UI layer polls
+- Mock `_sourceNodes` array on context tracks all created source nodes; `_setCurrentTime(t)` simulates time progression
+- Per-clip mixing: `ClipMixState` at engine.ts — auto-created on first `setClipGain`/`setClipMute`/`setClipSolo` call; each clip gets its own GainNode
+- Solo logic in `updateAllClipRouting()`: `anySoloed ? clip.soloed : !clip.muted` — solo overrides mute, clearing solos restores mute states
+- dB to linear gain: `Math.pow(10, db / 20)` — 0dB=1.0 unity gain
+- Mock `createGain()` tracked in `_gainNodes` array — same pattern as `_sourceNodes` for test assertions
+- `ClipMixState` extended with scheduling fields: `startTimeSec`, `trimStartSec`, `trimEndSec`, `assetId`, `sourceNode` — all default to 0/null
+- `scheduleClipSource()` at engine.ts handles all scheduling math: future clips scheduled at `ctx.currentTime + delta`, mid-clip joins adjust buffer offset, past clips skipped
+- Clip scheduling route: source → clip GainNode → destination (not source → destination), so mute/solo/gain automatically apply
+- `play()` dual mode: if `assetId` or `activeAssetId` → single-asset mode; if clips with assetIds configured → clip arrangement mode
+- `stopAllClipSources()` cleans up all clip source nodes — called by stop(), pause(), and indirectly by dispose()
+- `ensureGainNode()` is called during scheduling to create GainNode for clips that didn't have gain/mute/solo set prior
+- After scheduling clips, `updateAllClipRouting()` must be called to connect newly-created GainNodes to destination
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -646,4 +665,103 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - `isLiveListening(jobId)` uses a 10-second recency window: considers the job "live" if a chunk arrived in the last 10 seconds and the stream isn't complete
   - `LiveChunkPublisher` is optional in `WorkflowDeps` — `deps.liveChunks?.publishChunk()` uses optional chaining so live-listening gracefully degrades when KV is unavailable
   - `uint8ArrayToBase64()` in live-chunks.ts uses character-by-character `String.fromCharCode()` loop — avoids spread argument limits on large arrays
+---
+
+## 2026-04-25 - US-027
+- Created audio engine module at `src/lib/audio-engine/engine.ts`
+- `AudioEngine` interface with: `loadAsset`, `unloadAsset`, `dispose`, `getContext`, `hasAsset`, `getBuffer`, `resume`, `suspend`
+- `createAudioEngine(contextFactory?)` factory — lazy AudioContext creation on first use (respects browser autoplay policy)
+- `AudioContextFactory` interface allows test injection of mock AudioContext
+- `loadAsset(assetId, url)`: fetches audio via `fetch()`, decodes via `ctx.decodeAudioData()`, stores `AudioBuffer` by assetId
+- `unloadAsset(assetId)`: removes stored buffer; `dispose()`: clears all buffers and closes AudioContext
+- `resume()`/`suspend()` manage AudioContext state safely (no-op if no context or already in target state)
+- Created test file at `src/lib/audio-engine/engine.test.ts` with 27 tests covering:
+  - AudioContext lifecycle (lazy creation, reuse, resume, suspend, dispose) — 11 tests
+  - loadAsset (fetch, decode, store, replace, multi-asset, HTTP error, network error, decode error) — 8 tests
+  - unloadAsset (remove, no-op, isolation) — 3 tests
+  - hasAsset/getBuffer (unloaded, loaded) — 2 tests
+  - dispose (clear buffers, close context, recreatable) — 3 tests
+- All 279 tests pass (27 new), typecheck passes (0 errors, 0 warnings)
+- Files changed: src/lib/audio-engine/engine.ts (new), src/lib/audio-engine/engine.test.ts (new)
+- **Learnings for future iterations:**
+  - `AudioContextFactory` injectable pattern allows full mock control in vitest (Node.js has no AudioContext)
+  - Mock fetch: use `vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(...))` — `mockResolvedValue` returns the same Response object which can only have its body read once
+  - Mock AudioContext state: use a mutable `_state` variable with a getter — `vi.fn()` on `suspend`/`resume` changes state
+  - `(mockContext.method as ReturnType<typeof vi.fn>).mockClear()` to satisfy svelte-check's strict type checking on mocked methods
+  - Svelte components must never instantiate AudioContext directly — always use `createAudioEngine()` from this module
+---
+
+## 2026-04-25 - US-028
+- Implemented single-asset playback with transport controls in the audio engine
+- Extended `AudioEngine` interface with: `play(assetId?)`, `pause()`, `stop()`, `seek(timeSec)`, readonly `currentTime`, readonly `isPlaying`
+- `play()` creates `AudioBufferSourceNode`, connects to destination, starts from current offset; resumes suspended AudioContext; supports switching assets
+- `pause()` captures current position via `getCurrentTime()`, stops source node, suspends AudioContext
+- `stop()` stops source node, resets position to 0
+- `seek()` updates offset while paused, or restarts playback from new position while playing (creates new source node)
+- `currentTime` computed from `AudioContext.currentTime` — no rAF needed in the headless engine; UI layer polls the getter
+- `isPlaying` becomes false on natural playback end (via `onended` callback), stop, or pause
+- `scheduleSource()` helper encapsulates source node creation, connection, start, and onended wiring
+- `stopSource()` nullifies `onended` before stopping to prevent callback from firing on intentional stop/seek/switch
+- `unloadAsset()` now stops playback if the active asset is unloaded
+- `dispose()` now stops playback before clearing buffers and closing context
+- Added 33 new tests: play (8), pause (5), stop (3), seek (5), currentTime (4), isPlaying (5), unloadAsset with playback (2), dispose stops playback (1)
+- All 312 tests pass (33 new), typecheck passes (0 errors, 0 warnings)
+- Files changed: src/lib/audio-engine/engine.ts, src/lib/audio-engine/engine.test.ts
+- **Learnings for future iterations:**
+  - `AudioBufferSourceNode` is one-shot — cannot be restarted, must create a new one for play/seek/resume
+  - `scheduleSource()` at engine.ts creates and wires a new source node with onended handler
+  - `stopSource()` nullifies `onended` before calling `.stop()` — prevents the natural-end handler from firing during intentional stops
+  - `currentTime` is computed: `playbackOffset + (ctx.currentTime - playbackStartedAt)` when playing; just `playbackOffset` when paused
+  - When switching assets (play a different assetId), offset resets to 0; when resuming same asset (play with no arg after pause), offset is preserved
+  - Mock `createBufferSource()` tracks all created source nodes in `_sourceNodes` array for test assertions
+  - Mock `_setCurrentTime(t)` on context enables simulating time progression in tests
+  - `MockSourceNode._triggerEnded()` simulates natural playback completion for testing onended behavior
+---
+
+## 2026-04-25 - US-029
+- Implemented per-clip gain, mute, and solo in the audio engine
+- Added `setClipGain(clipId, gainDb)`: creates per-clip GainNode, converts dB to linear gain via `Math.pow(10, db/20)`
+- Added `setClipMute(clipId, muted)`: disconnects/reconnects clip GainNode from AudioContext destination
+- Added `setClipSolo(clipId, soloed)`: implements DAW-standard solo semantics via `updateAllClipRouting()`
+- Solo semantics: if any clips soloed, only soloed clips are connected; solo overrides mute; clearing all solos restores prior mute states
+- Internal `ClipMixState` tracks gainDb, muted, soloed, gainNode, connectedToDestination per clip
+- `updateAllClipRouting()` recomputes all clips' connection state in one pass — O(n) per update
+- `dispose()` updated to disconnect all clip GainNodes and clear clip state
+- Added 23 tests covering: gain dB conversion (5), gain node reuse (2), mute connect/disconnect (5), solo semantics (7), independent GainNodes (2), dispose cleanup (1), auto-creation (1)
+- All 335 tests pass (23 new), typecheck passes (0 errors, 0 warnings)
+- Files changed: src/lib/audio-engine/engine.ts, src/lib/audio-engine/engine.test.ts
+- **Learnings for future iterations:**
+  - `ClipMixState` at engine.ts tracks per-clip audio routing state — gainDb, muted, soloed, gainNode, connectedToDestination
+  - dB to linear conversion: `Math.pow(10, db / 20)` — 0dB=1.0, -6dB≈0.501, +6dB≈1.995
+  - Solo logic: `anySoloed ? clip.soloed : !clip.muted` — solo completely overrides mute
+  - `connectedToDestination` boolean prevents redundant connect/disconnect calls (idempotent routing updates)
+  - `updateAllClipRouting()` must be called after any mute/solo change since one clip's solo affects all other clips' audibility
+  - Clip state auto-created on first setter call (no explicit registerClip needed)
+  - Mock `createGain()` tracked in `_gainNodes` array parallel to `_sourceNodes` — same pattern for test assertions
+  - `isConnected(gainNode)` test helper: compares connect call count vs disconnect call count to determine effective state
+---
+
+## 2026-04-25 - US-030
+- Implemented clip start offset scheduling and trim region playback in audio engine
+- Extended `AudioEngine` interface with: `setClipStartOffset(clipId, startTimeSec)`, `setClipTrim(clipId, trimStartSec, trimEndSec)`, `setClipAssetId(clipId, assetId)`
+- Extended `ClipMixState` with scheduling fields: `startTimeSec`, `trimStartSec`, `trimEndSec`, `assetId`, `sourceNode`
+- Added `scheduleClipSource()` internal helper: schedules one clip on the AudioContext timeline with correct timing math:
+  - Future clips: `whenOnCtx = ctx.currentTime + (startTimeSec - transportTime)`, buffer starts from `trimStartSec`
+  - Mid-clip joins: `whenOnCtx = ctx.currentTime`, buffer offset adjusted by `trimStartSec + elapsed`
+  - Past clips (clipEndTime <= transportTime): skipped entirely
+- Added `stopAllClipSources()`: stops and cleans up all clip source nodes
+- Modified `play()` to support dual mode: single-asset mode (existing) + clip arrangement mode (new, when clips with assetIds are configured)
+- Modified `stop()` and `pause()` to clean up clip source nodes
+- Clip sources route through GainNode (source → gainNode → destination) so mute/solo/gain apply automatically
+- After scheduling, `updateAllClipRouting()` is called to ensure newly-created GainNodes are connected to destination
+- Added 20 tests: setClipStartOffset (2), setClipTrim (3), setClipAssetId (2), clip scheduling (13 — offset timing, future scheduling, mid-clip join, past clip skip, trim-only, trim+offset, mid-clip+trim, GainNode routing, auto-create GainNode, stop/pause cleanup, unloaded asset skip, multi-clip scheduling)
+- All 355 tests pass (20 new), typecheck passes (0 errors, 0 warnings)
+- Files changed: src/lib/audio-engine/engine.ts, src/lib/audio-engine/engine.test.ts
+- **Learnings for future iterations:**
+  - `scheduleClipSource()` computes 3 values: `whenOnCtx` (AudioContext time to start), `bufferOffset` (where in the audio buffer), `playDuration` (how long to play)
+  - `play()` checks `assetId ?? activeAssetId` for single-asset mode FIRST, then falls back to clip arrangement mode — this preserves backward compatibility
+  - `ensureGainNode()` is called inside `scheduleClipSource` to create GainNode on-demand — clips don't need prior gain/mute/solo setup
+  - `updateAllClipRouting()` after scheduling connects any newly-created GainNodes to destination (default: unmuted + not soloed = connected)
+  - `stopAllClipSources()` iterates all clips, nullifies `onended`, stops, disconnects source nodes — same pattern as `stopSource()`
+  - For arrangement transport: `playbackOffset` serves as the transport time for clip scheduling, `playbackStartedAt` anchors the AudioContext clock
 ---

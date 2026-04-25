@@ -800,4 +800,231 @@ describe('AudioEngine', () => {
 			});
 		});
 	});
+
+	describe('clip start offset and trim', () => {
+		describe('setClipStartOffset', () => {
+			it('stores start offset and auto-creates clip state', () => {
+				engine.setClipStartOffset('c1', 2.5);
+				// No error — clip state created with offset
+			});
+
+			it('clamps negative offset to 0', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipStartOffset('c1', -3);
+				mockContext._setCurrentTime(0);
+				await engine.play();
+				const source = mockContext._sourceNodes[0];
+				// Negative offset clamped to 0, clip starts immediately
+				expect(source.start).toHaveBeenCalledWith(0, 0, 5.0);
+			});
+		});
+
+		describe('setClipTrim', () => {
+			it('stores trim boundaries', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipTrim('c1', 1.0, 4.0);
+				mockContext._setCurrentTime(0);
+				await engine.play();
+				const source = mockContext._sourceNodes[0];
+				expect(source.start).toHaveBeenCalledWith(0, 1.0, 3.0);
+			});
+
+			it('null trimEnd uses full buffer duration', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipTrim('c1', 1.0, null);
+				mockContext._setCurrentTime(0);
+				await engine.play();
+				const source = mockContext._sourceNodes[0];
+				expect(source.start).toHaveBeenCalledWith(0, 1.0, 4.0);
+			});
+
+			it('clamps negative values to 0', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipTrim('c1', -1, null);
+				mockContext._setCurrentTime(0);
+				await engine.play();
+				const source = mockContext._sourceNodes[0];
+				expect(source.start).toHaveBeenCalledWith(0, 0, 5.0);
+			});
+		});
+
+		describe('setClipAssetId', () => {
+			it('associates clip with loaded audio asset', async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+				engine.setClipAssetId('c1', 'a1');
+				mockContext._setCurrentTime(0);
+				await engine.play();
+				expect(mockContext._sourceNodes.length).toBe(1);
+			});
+
+			it('clip without assetId is not scheduled', async () => {
+				engine.setClipStartOffset('c1', 0);
+				// c1 has no assetId — no clips to schedule, falls through to throw
+				await expect(engine.play()).rejects.toThrow('No asset specified');
+			});
+		});
+
+		describe('clip scheduling during play()', () => {
+			beforeEach(async () => {
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			});
+
+			it('schedules clip at offset 0 starting immediately', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipStartOffset('c1', 0);
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				const source = mockContext._sourceNodes[0];
+				expect(source.buffer).toBe(mockContext._mockBuffer);
+				expect(source.start).toHaveBeenCalledWith(0, 0, 5.0);
+			});
+
+			it('schedules clip at future offset on AudioContext timeline', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipStartOffset('c1', 2.0);
+				mockContext._setCurrentTime(10);
+				await engine.play();
+
+				const source = mockContext._sourceNodes[0];
+				// whenOnCtx = ctx.currentTime + (startTimeSec - transportTime) = 10 + 2 = 12
+				expect(source.start).toHaveBeenCalledWith(12, 0, 5.0);
+			});
+
+			it('joins mid-clip when transport is past clip start', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipStartOffset('c1', 0);
+				engine.seek(1.0);
+				mockContext._setCurrentTime(10);
+				await engine.play();
+
+				const source = mockContext._sourceNodes[0];
+				// elapsed = 1.0, bufferOffset = 0 + 1.0, playDuration = 5.0 - 1.0
+				expect(source.start).toHaveBeenCalledWith(10, 1.0, 4.0);
+			});
+
+			it('skips clip whose end time is before transport position', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipStartOffset('c1', 0); // clip ends at 5.0
+				engine.seek(6.0);
+				mockContext._setCurrentTime(10);
+				await engine.play();
+
+				// Clip skipped — no source nodes created
+				expect(mockContext._sourceNodes.length).toBe(0);
+			});
+
+			it('plays only the trimmed region of the buffer', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipTrim('c1', 1.0, 4.0);
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				const source = mockContext._sourceNodes[0];
+				expect(source.start).toHaveBeenCalledWith(0, 1.0, 3.0);
+			});
+
+			it('trim and offset work together', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipStartOffset('c1', 2.0);
+				engine.setClipTrim('c1', 1.0, 4.0);
+				mockContext._setCurrentTime(10);
+				await engine.play();
+
+				const source = mockContext._sourceNodes[0];
+				// whenOnCtx = 10 + 2 = 12, bufferOffset = 1.0, duration = 3.0
+				expect(source.start).toHaveBeenCalledWith(12, 1.0, 3.0);
+			});
+
+			it('mid-clip with trim adjusts buffer offset correctly', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipStartOffset('c1', 0);
+				engine.setClipTrim('c1', 1.0, 4.0); // 3s trimmed region
+				engine.seek(1.5); // 1.5s into the clip
+				mockContext._setCurrentTime(10);
+				await engine.play();
+
+				const source = mockContext._sourceNodes[0];
+				// bufferOffset = trimStart + elapsed = 1.0 + 1.5 = 2.5
+				// playDuration = 3.0 - 1.5 = 1.5
+				expect(source.start).toHaveBeenCalledWith(10, 2.5, 1.5);
+			});
+
+			it('routes clip source through its GainNode', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipGain('c1', -6);
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				const source = mockContext._sourceNodes[0];
+				expect(source.connect).toHaveBeenCalledWith(mockContext._gainNodes[0]);
+			});
+
+			it('creates GainNode for clip without prior gain/mute/solo setup', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				expect(mockContext.createGain).toHaveBeenCalledOnce();
+				const source = mockContext._sourceNodes[0];
+				expect(source.connect).toHaveBeenCalledWith(mockContext._gainNodes[0]);
+			});
+
+			it('stop() stops all clip source nodes', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				const source = mockContext._sourceNodes[0];
+				engine.stop();
+				expect(source.stop).toHaveBeenCalled();
+				expect(source.disconnect).toHaveBeenCalled();
+				expect(engine.isPlaying).toBe(false);
+				expect(engine.currentTime).toBe(0);
+			});
+
+			it('pause() stops clip source nodes and preserves position', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				mockContext._setCurrentTime(0);
+				await engine.play();
+				mockContext._setCurrentTime(2);
+				await engine.pause();
+
+				const source = mockContext._sourceNodes[0];
+				expect(source.stop).toHaveBeenCalled();
+				expect(engine.currentTime).toBeCloseTo(2, 1);
+				expect(engine.isPlaying).toBe(false);
+			});
+
+			it('skips clips with unloaded asset buffers', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipAssetId('c2', 'unknown-asset');
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				// Only c1 should be scheduled
+				expect(mockContext._sourceNodes.length).toBe(1);
+			});
+
+			it('schedules multiple clips at different offsets', async () => {
+				await engine.loadAsset('a2', 'https://example.com/audio2.mp3');
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipStartOffset('c1', 0);
+				engine.setClipAssetId('c2', 'a2');
+				engine.setClipStartOffset('c2', 3.0);
+				mockContext._setCurrentTime(10);
+				await engine.play();
+
+				expect(mockContext._sourceNodes.length).toBe(2);
+				// c1 at offset 0: starts at ctx.currentTime = 10
+				expect(mockContext._sourceNodes[0].start).toHaveBeenCalledWith(10, 0, 5.0);
+				// c2 at offset 3.0: starts at 10 + 3 = 13
+				expect(mockContext._sourceNodes[1].start).toHaveBeenCalledWith(13, 0, 5.0);
+			});
+		});
+	});
 });
