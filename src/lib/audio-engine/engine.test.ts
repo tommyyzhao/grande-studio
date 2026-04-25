@@ -1026,5 +1026,199 @@ describe('AudioEngine', () => {
 				expect(mockContext._sourceNodes[1].start).toHaveBeenCalledWith(13, 0, 5.0);
 			});
 		});
+
+		describe('setClipLoop — drag-to-extend looping', () => {
+			beforeEach(async () => {
+				// Buffer duration is 5.0 seconds
+				await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			});
+
+			it('stores clipDurationSec on clip state', () => {
+				engine.setClipLoop('c1', 12.5);
+				// No error — clip state created with clipDurationSec
+			});
+
+			it('clamps negative clipDurationSec to 0 — no source nodes scheduled', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipLoop('c1', -5);
+				mockContext._setCurrentTime(0);
+				await engine.play();
+				// clipDurationSec=0 → effectiveDuration=0 → no source nodes
+				expect(mockContext._sourceNodes.length).toBe(0);
+			});
+
+			it('no looping when clipDurationSec <= trimmed audio length', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipLoop('c1', 3.0); // shorter than 5.0 buffer
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				// Single source node, plays only 3.0 seconds
+				expect(mockContext._sourceNodes.length).toBe(1);
+				expect(mockContext._sourceNodes[0].start).toHaveBeenCalledWith(0, 0, 3.0);
+			});
+
+			it('no looping when clipDurationSec equals trimmed audio length', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipLoop('c1', 5.0); // exact buffer length
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				expect(mockContext._sourceNodes.length).toBe(1);
+				expect(mockContext._sourceNodes[0].start).toHaveBeenCalledWith(0, 0, 5.0);
+			});
+
+			it('loops exactly 2x the trimmed region', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipLoop('c1', 10.0); // 2x 5.0
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				// Two source nodes, each playing full 5.0 buffer
+				expect(mockContext._sourceNodes.length).toBe(2);
+				expect(mockContext._sourceNodes[0].start).toHaveBeenCalledWith(0, 0, 5.0);
+				expect(mockContext._sourceNodes[1].start).toHaveBeenCalledWith(5.0, 0, 5.0);
+			});
+
+			it('partial loop: 2.5x the trimmed region', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipLoop('c1', 12.5); // 2.5x 5.0
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				// 3 source nodes: full + full + 2.5s partial
+				expect(mockContext._sourceNodes.length).toBe(3);
+				expect(mockContext._sourceNodes[0].start).toHaveBeenCalledWith(0, 0, 5.0);
+				expect(mockContext._sourceNodes[1].start).toHaveBeenCalledWith(5.0, 0, 5.0);
+				expect(mockContext._sourceNodes[2].start).toHaveBeenCalledWith(10.0, 0, 2.5);
+			});
+
+			it('looping with trim region: repeats trimmed segment', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipTrim('c1', 1.0, 3.0); // 2.0s trimmed region
+				engine.setClipLoop('c1', 5.0); // 2.5x the trimmed region
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				// 3 source nodes: 2.0 + 2.0 + 1.0 partial
+				expect(mockContext._sourceNodes.length).toBe(3);
+				expect(mockContext._sourceNodes[0].start).toHaveBeenCalledWith(0, 1.0, 2.0);
+				expect(mockContext._sourceNodes[1].start).toHaveBeenCalledWith(2.0, 1.0, 2.0);
+				expect(mockContext._sourceNodes[2].start).toHaveBeenCalledWith(4.0, 1.0, 1.0);
+			});
+
+			it('looping with start offset: loops start at offset', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipStartOffset('c1', 3.0);
+				engine.setClipLoop('c1', 10.0); // 2x 5.0
+				mockContext._setCurrentTime(10);
+				await engine.play();
+
+				// Clip starts at transport 3.0 → ctx time 10 + 3 = 13
+				expect(mockContext._sourceNodes.length).toBe(2);
+				expect(mockContext._sourceNodes[0].start).toHaveBeenCalledWith(13, 0, 5.0);
+				expect(mockContext._sourceNodes[1].start).toHaveBeenCalledWith(18, 0, 5.0);
+			});
+
+			it('mid-clip join during first loop iteration', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipLoop('c1', 15.0); // 3x 5.0
+				engine.seek(2.0); // 2s into the clip
+				mockContext._setCurrentTime(10);
+				await engine.play();
+
+				// elapsedInClip = 2.0, loopOffset = 2.0 % 5.0 = 2.0
+				// First: plays 3.0s (5.0 - 2.0) from buffer offset 2.0
+				// Second: full 5.0s
+				// Third: full 5.0s
+				expect(mockContext._sourceNodes.length).toBe(3);
+				expect(mockContext._sourceNodes[0].start).toHaveBeenCalledWith(10, 2.0, 3.0);
+				expect(mockContext._sourceNodes[1].start).toHaveBeenCalledWith(13, 0, 5.0);
+				expect(mockContext._sourceNodes[2].start).toHaveBeenCalledWith(18, 0, 5.0);
+			});
+
+			it('mid-clip join during second loop iteration', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipLoop('c1', 15.0); // 3x 5.0
+				engine.seek(7.0); // 7s into the clip → 2nd iteration, 2.0 into buffer
+				mockContext._setCurrentTime(10);
+				await engine.play();
+
+				// elapsedInClip = 7.0, loopOffset = 7.0 % 5.0 = 2.0, remaining = 15 - 7 = 8.0
+				// First: plays 3.0s (5.0 - 2.0) from buffer offset 2.0
+				// Second: full 5.0s
+				expect(mockContext._sourceNodes.length).toBe(2);
+				expect(mockContext._sourceNodes[0].start).toHaveBeenCalledWith(10, 2.0, 3.0);
+				expect(mockContext._sourceNodes[1].start).toHaveBeenCalledWith(13, 0, 5.0);
+			});
+
+			it('mid-clip join during partial last loop', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipLoop('c1', 12.5); // 2.5x 5.0
+				engine.seek(11.0); // 11s into the clip → 3rd iteration, 1.0 into buffer
+				mockContext._setCurrentTime(10);
+				await engine.play();
+
+				// elapsedInClip = 11.0, loopOffset = 11.0 % 5.0 = 1.0, remaining = 12.5 - 11.0 = 1.5
+				// Only 1.5s left from buffer offset 1.0
+				expect(mockContext._sourceNodes.length).toBe(1);
+				expect(mockContext._sourceNodes[0].start).toHaveBeenCalledWith(10, 1.0, 1.5);
+			});
+
+			it('skips looped clip that has fully ended', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipLoop('c1', 10.0);
+				engine.seek(11.0); // past the clip end (10s)
+				mockContext._setCurrentTime(10);
+				await engine.play();
+
+				// Clip already ended — no source nodes
+				expect(mockContext._sourceNodes.length).toBe(0);
+			});
+
+			it('stop cleans up all loop source nodes', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipLoop('c1', 15.0); // 3 source nodes
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				expect(mockContext._sourceNodes.length).toBe(3);
+				engine.stop();
+				for (const node of mockContext._sourceNodes) {
+					expect(node.stop).toHaveBeenCalled();
+					expect(node.disconnect).toHaveBeenCalled();
+				}
+				expect(engine.isPlaying).toBe(false);
+			});
+
+			it('all loop sources connect through the clip GainNode', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipGain('c1', -6);
+				engine.setClipLoop('c1', 10.0); // 2 source nodes
+				mockContext._setCurrentTime(0);
+				await engine.play();
+
+				expect(mockContext._sourceNodes.length).toBe(2);
+				for (const node of mockContext._sourceNodes) {
+					expect(node.connect).toHaveBeenCalledWith(mockContext._gainNodes[0]);
+				}
+			});
+
+			it('looping with trim and offset combined', async () => {
+				engine.setClipAssetId('c1', 'a1');
+				engine.setClipStartOffset('c1', 2.0);
+				engine.setClipTrim('c1', 1.0, 3.0); // 2.0s trimmed region
+				engine.setClipLoop('c1', 7.0); // 3.5x the 2.0s trimmed region
+				mockContext._setCurrentTime(10);
+				await engine.play();
+
+				// Clip starts at transport 2.0, loops 2.0s regions for 7.0s total
+				expect(mockContext._sourceNodes.length).toBe(4);
+				expect(mockContext._sourceNodes[0].start).toHaveBeenCalledWith(12, 1.0, 2.0);
+				expect(mockContext._sourceNodes[1].start).toHaveBeenCalledWith(14, 1.0, 2.0);
+				expect(mockContext._sourceNodes[2].start).toHaveBeenCalledWith(16, 1.0, 2.0);
+				expect(mockContext._sourceNodes[3].start).toHaveBeenCalledWith(18, 1.0, 1.0);
+			});
+		});
 	});
 });

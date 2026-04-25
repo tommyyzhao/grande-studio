@@ -48,6 +48,9 @@ export interface AudioEngine {
 	setClipTrim(clipId: string, trimStartSec: number, trimEndSec: number | null): void;
 	/** Associate a clip with a loaded audio asset */
 	setClipAssetId(clipId: string, assetId: string): void;
+
+	/** Set the total playback duration for a clip (enables looping when > trimmed audio length) */
+	setClipLoop(clipId: string, clipDurationSec: number): void;
 }
 
 /** Injectable factory so tests can provide a mock AudioContext */
@@ -82,7 +85,8 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 		trimStartSec: number;
 		trimEndSec: number | null;
 		assetId: string | null;
-		sourceNode: AudioBufferSourceNode | null;
+		sourceNodes: AudioBufferSourceNode[];
+		clipDurationSec: number | null;
 	}
 	const clips = new Map<string, ClipMixState>();
 
@@ -147,7 +151,8 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 				trimStartSec: 0,
 				trimEndSec: null,
 				assetId: null,
-				sourceNode: null
+				sourceNodes: [],
+				clipDurationSec: null
 			};
 			clips.set(clipId, clip);
 		}
@@ -196,52 +201,86 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 
 		if (trimmedDuration <= 0) return;
 
-		const clipEndTime = clip.startTimeSec + trimmedDuration;
+		// Effective clip duration: clipDurationSec overrides trimmedDuration
+		const effectiveDuration = clip.clipDurationSec !== null
+			? Math.max(0, clip.clipDurationSec)
+			: trimmedDuration;
+
+		if (effectiveDuration <= 0) return;
+
+		const clipEndTime = clip.startTimeSec + effectiveDuration;
 
 		// Skip clips that have already ended relative to transport
 		if (clipEndTime <= transportTime) return;
 
-		let whenOnCtx: number;
-		let bufferOffset: number;
-		let playDuration: number;
-
-		if (clip.startTimeSec >= transportTime) {
-			// Clip starts in the future
-			whenOnCtx = ctx.currentTime + (clip.startTimeSec - transportTime);
-			bufferOffset = trimStart;
-			playDuration = trimmedDuration;
-		} else {
-			// Transport is mid-clip
-			const elapsed = transportTime - clip.startTimeSec;
-			whenOnCtx = ctx.currentTime;
-			bufferOffset = trimStart + elapsed;
-			playDuration = trimmedDuration - elapsed;
-		}
-
-		if (playDuration <= 0) return;
-
-		const source = ctx.createBufferSource();
-		source.buffer = buffer;
-
 		const gainNode = ensureGainNode(clip);
-		source.connect(gainNode);
+		clip.sourceNodes = [];
 
-		source.start(whenOnCtx, bufferOffset, playDuration);
-		clip.sourceNode = source;
+		if (effectiveDuration <= trimmedDuration) {
+			// No looping — play once (possibly shorter than trimmed region)
+			let whenOnCtx: number;
+			let bufferOffset: number;
+			let playDuration: number;
+
+			if (clip.startTimeSec >= transportTime) {
+				whenOnCtx = ctx.currentTime + (clip.startTimeSec - transportTime);
+				bufferOffset = trimStart;
+				playDuration = effectiveDuration;
+			} else {
+				const elapsed = transportTime - clip.startTimeSec;
+				whenOnCtx = ctx.currentTime;
+				bufferOffset = trimStart + elapsed;
+				playDuration = effectiveDuration - elapsed;
+			}
+
+			if (playDuration <= 0) return;
+
+			const source = ctx.createBufferSource();
+			source.buffer = buffer;
+			source.connect(gainNode);
+			source.start(whenOnCtx, bufferOffset, playDuration);
+			clip.sourceNodes.push(source);
+		} else {
+			// Looping — schedule multiple source nodes to cover clipDurationSec
+			const elapsedInClip = Math.max(0, transportTime - clip.startTimeSec);
+			let remaining = effectiveDuration - elapsedInClip;
+
+			// Figure out which loop iteration and position we're in
+			let loopOffset = elapsedInClip % trimmedDuration;
+			let timeOnCtx = clip.startTimeSec >= transportTime
+				? ctx.currentTime + (clip.startTimeSec - transportTime)
+				: ctx.currentTime;
+
+			while (remaining > 0) {
+				const playDuration = Math.min(trimmedDuration - loopOffset, remaining);
+
+				if (playDuration <= 0) break;
+
+				const source = ctx.createBufferSource();
+				source.buffer = buffer;
+				source.connect(gainNode);
+				source.start(timeOnCtx, trimStart + loopOffset, playDuration);
+				clip.sourceNodes.push(source);
+
+				timeOnCtx += playDuration;
+				remaining -= playDuration;
+				loopOffset = 0; // subsequent iterations always start from trimStart
+			}
+		}
 	}
 
 	function stopAllClipSources(): void {
 		for (const clip of clips.values()) {
-			if (clip.sourceNode) {
-				clip.sourceNode.onended = null;
+			for (const node of clip.sourceNodes) {
+				node.onended = null;
 				try {
-					clip.sourceNode.stop();
+					node.stop();
 				} catch {
 					// Already stopped
 				}
-				clip.sourceNode.disconnect();
-				clip.sourceNode = null;
+				node.disconnect();
 			}
+			clip.sourceNodes = [];
 		}
 	}
 
@@ -431,6 +470,11 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 		clip.assetId = assetId;
 	}
 
+	function setClipLoop(clipId: string, clipDurationSec: number): void {
+		const clip = getOrCreateClipState(clipId);
+		clip.clipDurationSec = Math.max(0, clipDurationSec);
+	}
+
 	return {
 		loadAsset,
 		unloadAsset,
@@ -455,6 +499,7 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 		setClipSolo,
 		setClipStartOffset,
 		setClipTrim,
-		setClipAssetId
+		setClipAssetId,
+		setClipLoop
 	};
 }
