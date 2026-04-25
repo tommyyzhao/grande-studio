@@ -3,6 +3,7 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 ---
 
 ## Codebase Patterns
+- Download endpoint at `src/routes/api/download/[assetId]/+server.ts`: GET fetches R2 bytes directly via `bucket.get()`, serves with `Content-Disposition: attachment; filename="{sanitized_title}.{ext}"` — no redirect to signed URL
 - Take edges API at `src/routes/api/take-edges/+server.ts`: POST creates edges, GET returns `{ counts, edges }` — `counts` is Record<parentAssetId, number>, `edges` is array of `{ parentAssetId, childAssetId, branchType }`
 - `parentEdges` Map<childAssetId, parentAssetId> in workspace page — built from GET /api/take-edges edge data, passed through BlockList to BlockCard for "Derived from" badges
 - Block card scroll-to: `data-asset-id` attribute on wrapper div + `scrollIntoView()` + temporary `ring-2 ring-primary` highlight for 1.5s
@@ -1282,4 +1283,42 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - `parentEdges` Map (childAssetId → parentAssetId) built client-side from edge data; parent titles looked up from the asset list in BlockList
   - Scroll-to uses `data-asset-id` attribute + `scrollIntoView({ behavior: 'smooth', block: 'center' })` + temporary `ring-2 ring-primary` highlight for 1.5s
   - `{@const}` in `{#each}` block used to compute per-item parentAssetId from the parentEdges map
+---
+
+## 2026-04-25 05:57 - US-057
+- What was implemented
+  - Created download API endpoint at `src/routes/api/download/[assetId]/+server.ts`
+  - Endpoint validates auth, queries asset via RLS, fetches raw bytes from R2 bucket, serves with `Content-Disposition: attachment` header
+  - Filename is sanitized block title + format extension (e.g., `My_Track.mp3`)
+  - Format preserved as-is from provider (no re-encoding)
+  - Wired `handleExport` in workspace `+page.svelte` — creates a temporary anchor element to trigger browser download
+  - Passed `onExport={handleExport}` to BlockList component
+  - Format display already existed on block card (uppercase badge, e.g., "MP3")
+- Files changed
+  - `src/routes/api/download/[assetId]/+server.ts` (new)
+  - `src/routes/+page.svelte` (added handleExport + onExport prop to BlockList)
+- **Learnings for future iterations:**
+  - Download endpoint pattern: fetch R2 bytes directly with `bucket.get()`, serve with `Content-Disposition: attachment; filename="..."` — don't redirect to signed URL for downloads
+  - `sanitizeFilename()` strips `<>:"/\|?*` and control chars, replaces whitespace with `_`, truncates to 200 chars
+  - `formatToContentType()` maps format→MIME: mp3→audio/mpeg, wav→audio/wav, flac→audio/flac, m4a→audio/mp4
+  - Block card already displays format in uppercase via `{#if asset.format}` conditional on line 316-318
+---
+
+## 2026-04-25 - US-058
+- What was implemented
+  - `ArrangementSnapshotV1` interface with `snapshotVersion: 1`, `projectId`, `renderedAt`, `sampleRate: 44100`, `bitDepth: 16`, and `clips` array
+  - `ClipSnapshotV1` interface with all required clip fields plus `sourceUrl` (signed R2 URL)
+  - `buildSnapshot(projectId, clips, getSignedUrl)` async function that validates clips and resolves signed URLs
+  - Validation: rejects empty projectId, empty clipId/assetId, negative times, non-positive clipDurationSec, trimEndSec <= trimStartSec
+  - Includes all clips (muted/soloed) — renderer applies filtering
+  - Deduplicates `getSignedUrl` calls for shared assets
+  - Result type: `{ ok: true, snapshot }` or `{ ok: false, errors }` consistent with project patterns
+- Files changed
+  - `src/lib/services/arrangement-snapshot.ts` (new)
+  - `src/lib/services/arrangement-snapshot.test.ts` (new — 19 tests)
+- **Learnings for future iterations:**
+  - `GetSignedUrl` type alias: `(assetId: string) => Promise<string>` — keeps snapshot builder decoupled from R2 service
+  - `SnapshotValidationError` includes `clipId | null` and `field` for precise error reporting
+  - Snapshot builder does NOT filter muted/soloed clips — renderer is responsible for applying mute/solo logic
+  - Deduplicate signed URL resolution via `Set` of unique assetIds before async calls
 ---
