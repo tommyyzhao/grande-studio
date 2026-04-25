@@ -3,6 +3,8 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 ---
 
 ## Codebase Patterns
+- New shadcn-svelte components may need `WithoutChildrenOrChild` type in `src/lib/utils.ts` — add it if typecheck fails after installing components
+- `MINIMAX_MAX_LYRICS_LENGTH` exported from `src/lib/providers/minimax/validateMusicRequest.ts` — reuse in UI for character count limits
 - Workspace lives at root route `/` — `+page.server.ts` handles project find-or-create; `+page.svelte` is the full workspace layout
 - PATCH /api/project endpoint updates project title — uses same `getDb()` + `withRLS` pattern as other endpoints
 - Root layout conditionally hides its header on workspace page via `$page.url.pathname === '/'`
@@ -933,4 +935,36 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - `crypto.randomUUID()` for idempotency keys — available in all modern browsers
   - Default mode is `text_to_music` with `lyricsOptimizer: true` — simplest path for prompt-only generation
   - Error handling: parse JSON response for message, fallback to status code text
+---
+
+## 2026-04-25 03:20 - US-038
+- Added instrumental toggle (Switch component) and lyrics textarea to generate panel
+- Installed shadcn-svelte Switch component; added missing `WithoutChildrenOrChild` type to utils.ts
+- Lyrics textarea disabled with message when instrumental is on
+- Client-side validation shows error when instrumental=true + lyrics present
+- Character count with MiniMax limit indicator (N / 2000) shown below lyrics field
+- Submit sends correct `mode` ('instrumental' vs 'text_to_music'), `instrumental`, `lyrics`, and `lyricsOptimizer` to endpoint
+- lyricsOptimizer auto-enabled when non-instrumental and no lyrics provided
+- Form resets all fields (prompt, lyrics, instrumental) on successful submission
+- Files changed: src/lib/components/generate-panel.svelte, src/lib/components/ui/switch/ (new), src/lib/utils.ts
+- **Learnings for future iterations:**
+  - shadcn-svelte Switch needs `WithoutChildrenOrChild` type in utils.ts — newer shadcn-svelte versions reference it but the scaffolded utils.ts may not include it
+  - Switch component uses `bind:checked` for two-way binding, `size="sm"` for compact display
+  - `MINIMAX_MAX_LYRICS_LENGTH` is exported from validateMusicRequest.ts — reuse it in UI for the character count limit
+  - Client-side validation via `$derived.by()` gives reactive error messages without a submit roundtrip
+---
+
+## 2026-04-25 03:25 - US-039
+- Added structure tag palette/toolbar below lyrics textarea with buttons for all 11 supported tags
+- Tapping a tag inserts it at cursor position in lyrics textarea (with smart newline handling)
+- Unsupported bracketed tags in lyrics produce yellow warnings before submission
+- Supported tags extracted from lyrics and sent as `structureTags` array in generation request
+- Tags are not lowercased or rewritten — inserted exactly as defined in `SUPPORTED_STRUCTURE_TAGS`
+- Tag palette hidden when instrumental mode is active (lyrics textarea is hidden in that mode)
+- Files changed: src/lib/components/generate-panel.svelte
+- **Learnings for future iterations:**
+  - shadcn-svelte Textarea component exposes `ref` as a bindable prop — use `bind:ref={lyricsRef}` to get the underlying HTMLTextAreaElement for cursor position tracking
+  - `selectionStart`/`selectionEnd` on the textarea ref give cursor position for insertion; use `requestAnimationFrame` to set cursor after Svelte updates the value
+  - `SUPPORTED_STRUCTURE_TAGS` from validateMusicRequest.ts is `as const` — use `(typeof SUPPORTED_STRUCTURE_TAGS)[number]` for type-safe includes check
+  - Structure tags are already fully supported in the backend: endpoint accepts `structureTags`, validator checks them, DB stores as `structureTagsJson`, workflow passes them through
 ---
