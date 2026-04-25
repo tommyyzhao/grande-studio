@@ -3,6 +3,9 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 ---
 
 ## Codebase Patterns
+- vitest works with SvelteKit's vite config out of the box — `npm test` runs `vitest run`, `npm run test:watch` for watch mode
+- MiniMax validator is the single source of truth for request validation: `src/lib/providers/minimax/validateMusicRequest.ts`
+- Supported MiniMax structure tags: [Intro], [Verse], [Verse 1], [Verse 2], [Pre-Chorus], [Chorus], [Hook], [Bridge], [Breakdown], [Solo], [Outro]
 - Use `npx shadcn-svelte add <component> --no-deps --overwrite` and pipe `echo "y"` for confirmation to add shadcn-svelte components
 - shadcn-svelte v1.2.7 presets: nova, vega, maia, lyra, mira, luma (not "default"/"new-york")
 - `WithElementRef` type must be exported from `$lib/utils.ts` for shadcn-svelte components
@@ -154,6 +157,12 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - BetterAuth CLI `migrate` does NOT work with the Drizzle adapter — use `npx @better-auth/cli generate` to get the schema, then `drizzle-kit generate` + `drizzle-kit push`
   - The CLI generates `auth-schema.ts` at the repo root by default — move it to `src/lib/server/db/auth-schema.ts`
   - BetterAuth auth tables use singular names (user, session, account, verification) with text IDs — not UUIDs
+- BetterAuth server-side session: `auth.api.getSession({ headers: request.headers })` returns `{ user, session } | null`
+- SvelteKit hooks.server.ts populates `event.locals.user` and `event.locals.session` for all routes
+- Protected routes use `PROTECTED_PREFIXES` array in hooks.server.ts; redirect to `/signin` if no session
+- Root `/` allows unauthenticated access (temp project support); `/projects` prefix is protected
+- `authClient.signOut()` from `better-auth/svelte` ends session client-side; redirect to `/signin` after
+- Layout server load passes `locals.user` to all pages via `data.user`
   - The Drizzle adapter accepts `schema` option to pass the auth table definitions
   - `toSvelteKitHandler` from `better-auth/svelte-kit` wraps the auth handler for SvelteKit route handlers
   - `createAuthClient` from `better-auth/svelte` creates a Svelte-aware auth client with nanostore-based reactivity
@@ -179,4 +188,54 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - shadcn-svelte Input supports `bind:value` and `aria-invalid` for validation states
   - Use `$derived.by(() => ...)` for validation logic that depends on reactive state
   - Svelte 5 form handling: use `onsubmit` attribute (not `on:submit`) with `e.preventDefault()`
+---
+
+## 2026-04-24 - US-009
+- Added auth session middleware, sign-out, and protected route layout
+- Created `src/hooks.server.ts` — validates BetterAuth session on every request via `auth.api.getSession({ headers })`, populates `event.locals.user` and `event.locals.session`
+- Updated `src/app.d.ts` — defined `App.Locals` with typed `user` and `session` (or null)
+- Created `src/routes/+layout.server.ts` — passes `locals.user` to all pages via page data
+- Updated `src/routes/+layout.svelte` — shows header with user email and sign-out button when authenticated; sign-out calls `authClient.signOut()` then redirects to `/signin`
+- Protected routes via `PROTECTED_PREFIXES` array in hooks — `/projects` prefix redirects to `/signin` if unauthenticated; root `/` allows unauth access for temp project
+- Session persistence is cookie-based (BetterAuth default behavior)
+- Files changed: src/app.d.ts, src/hooks.server.ts, src/routes/+layout.server.ts, src/routes/+layout.svelte
+- **Learnings for future iterations:**
+  - `auth.api.getSession({ headers: event.request.headers })` returns `{ user, session } | null` — use in hooks.server.ts
+  - App.Locals types in app.d.ts must allow null for unauthenticated state
+  - Protected routes are cleanest as prefix checks in hooks.server.ts rather than per-route layout guards
+  - `authClient.signOut()` from `better-auth/svelte` returns a promise — await before redirecting
+  - Layout server load function at root level makes user available to ALL pages via `data.user`
+  - Svelte 5 layout: `let { data, children } = $props()` to access both page data and children snippet
+---
+
+## 2026-04-24 - US-010
+- Created provider registry types and provider interface
+- `src/lib/providers/types.ts`: ProviderId type, ProviderRegistryEntry interface, MusicProvider interface with generateTextToMusic/generateInstrumental/generateCoverRestyle methods (plus optional streamGenerationAudio/preprocessCoverSource), and all input/output types (TextToMusicInput, InstrumentalGenerationInput, CoverRestyleInput, ProviderGenerationHandle, ProviderAudioChunk)
+- `src/lib/providers/registry.ts`: V1 registry with minimax enabled, elevenlabs/stability as disabled stubs, plus getProvider/getEnabledProviders helpers
+- No `any` types used anywhere in provider code
+- Typecheck passes (0 errors)
+- **Learnings for future iterations:**
+  - Provider types at `src/lib/providers/types.ts` define the adapter boundary — all MiniMax (and future) adapters must implement MusicProvider
+  - ProviderId ('minimax'|'elevenlabs'|'stability') is separate from the DB schema Provider type which also includes 'local_upload' and 'browser_render'
+  - Optional interface methods use `method?()` syntax — adapters only implement streaming if they support it
+  - Registry is `readonly` to prevent runtime mutation
+---
+
+## 2026-04-24 - US-011
+- Created MiniMax request validator at `src/lib/providers/minimax/validateMusicRequest.ts`
+- Validates: prompt non-empty, instrumental+lyrics conflict, non-instrumental requires lyrics or optimizer, lyrics length limit (2000 chars), cover/re-style requires source asset, unsupported structure tags produce warnings
+- Created `MusicRequestInput` type with mode ('text_to_music'|'instrumental'|'cover_restyle'), prompt, lyrics, instrumental, lyricsOptimizer, structureTags, sourceAssetId
+- Returns `ValidationResult` with valid boolean, errors array, and warnings array
+- Detects unsupported bracketed tags in lyrics text (not just structureTags array)
+- Test file at `src/lib/providers/minimax/validateMusicRequest.test.ts` with 22 test cases covering all acceptance criteria
+- Installed vitest (v4.1.5) and added `test`/`test:watch` npm scripts
+- All 22 tests pass, typecheck passes (0 errors)
+- Files changed: src/lib/providers/minimax/validateMusicRequest.ts, src/lib/providers/minimax/validateMusicRequest.test.ts, package.json, package-lock.json
+- **Learnings for future iterations:**
+  - vitest works out of the box with SvelteKit's vite config — no separate vitest.config.ts needed
+  - `npm test` runs `vitest run` (single pass); `npm run test:watch` runs `vitest` (watch mode)
+  - Validator uses `MusicRequestInput` type (not the provider-level `TextToMusicInput`/`CoverRestyleInput`) to support all modes in one function
+  - Supported structure tags: [Intro], [Verse], [Verse 1], [Verse 2], [Pre-Chorus], [Chorus], [Hook], [Bridge], [Breakdown], [Solo], [Outro]
+  - MiniMax lyrics limit constant: `MINIMAX_MAX_LYRICS_LENGTH = 2000`
+  - Cover/re-style mode doesn't require lyrics (they're optional), and skips the non-instrumental lyrics check
 ---
