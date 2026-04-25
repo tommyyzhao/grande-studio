@@ -44,6 +44,11 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - `normalizeMiniMaxError(error)` at adapter.ts maps MiniMaxApiError → ProviderError: 401/403→auth, 429→rate_limited, 408/502/503/504→timeout, 400/1000+→validation
 - `parseStreamLines(body)` at adapter.ts parses SSE or JSON-line streaming responses into hex audio chunks
 - Adapter methods now throw `ProviderError` (not `MiniMaxApiError`) — MiniMaxApiError is internal only
+- Quota service uses repository pattern: `QuotaRepository` interface for DB abstraction, `createQuotaService(repo)` factory for business logic, `createDrizzleQuotaRepository(db)` for Drizzle implementation
+- `validateQuotaTransition(current, next)` at `src/lib/services/quota.ts` — pure function like asset-status/job-status
+- Quota constants: `QUOTA_TTL_MS = 600000` (10 min), `DAILY_LIMIT = 10`
+- `QuotaServiceResult` is `{ ok: true; reservation } | { ok: false; error: string }` — not exceptions
+- Daily usage counted by committed reservations updated after today's midnight UTC
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -334,4 +339,28 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - `TransitionResult` is a discriminated union: `{ valid: true }` or `{ valid: false; reason: string }`
   - Failed jobs/assets are immutable (except asset failed→deleted). Retry always creates a new job.
   - Asset and job status types imported from `$lib/server/db/schema` — keep in sync if schema changes
+---
+
+## 2026-04-24 - US-016
+- Created quota reservation service at `src/lib/services/quota.ts`
+- Pure `validateQuotaTransition(current, next)` function following state machine pattern
+- Allowed transitions: reserved→committed, reserved→released, reserved→expired
+- Terminal states: committed, released, expired — no outbound transitions
+- `QuotaRepository` interface for DB abstraction with `createDrizzleQuotaRepository(db)` Drizzle implementation
+- `createQuotaService(repo)` factory returning `QuotaService` with:
+  - `reserveQuota(ownerId, jobId, idempotencyKey)`: creates reservation with 10-minute TTL, idempotent on key+owner
+  - `commitQuota(reservationId)`: transitions reserved→committed with validation
+  - `releaseQuota(reservationId)`: transitions reserved→released with validation
+  - `expireStaleReservations()`: expires all reserved rows past their TTL
+  - `checkDailyUsage(ownerId)`: counts committed reservations since midnight UTC today
+- In-memory `QuotaRepository` implementation in test file for isolated unit testing
+- 46 new tests covering: all transitions (allowed/disallowed/same-status), reserve/commit/release/expire service operations, idempotency key dedup, daily usage counting, full lifecycle scenarios
+- All 229 tests pass, typecheck passes (0 errors)
+- Files changed: src/lib/services/quota.ts, src/lib/services/quota.test.ts
+- **Learnings for future iterations:**
+  - Repository pattern enables testing service logic without a real DB — `createInMemoryQuotaRepo()` in test file
+  - `QuotaServiceResult` uses `{ ok: true/false }` discriminated union — not exceptions
+  - Idempotency key is scoped to owner — same key for different owners creates separate reservations
+  - Daily usage counts committed reservations where `updatedAt > todayStartUtc` — uses `updatedAt` because that's when the commit happened
+  - Constants exported: `QUOTA_TTL_MS = 600000` (10 min), `DAILY_LIMIT = 10`
 ---
