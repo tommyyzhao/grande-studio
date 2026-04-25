@@ -10,9 +10,10 @@
 
 	interface Props {
 		projectId: string | null;
+		onGenerated?: (result: { jobId: string; assetId: string; prompt: string; lyrics: string | null }) => void;
 	}
 
-	let { projectId }: Props = $props();
+	let { projectId, onGenerated }: Props = $props();
 
 	// ─── Panel mode ──────────────────────────────────────────────────────
 	type PanelMode = 'generate' | 'cover_restyle';
@@ -272,6 +273,17 @@
 
 			const data = await res.json();
 			lastResult = { jobId: data.jobId, assetId: data.assetId };
+
+			// Notify parent so block list can add a queued block immediately
+			const submittedPrompt = prompt.trim();
+			const submittedLyrics = lyrics.trim() || null;
+			onGenerated?.({
+				jobId: data.jobId,
+				assetId: data.assetId,
+				prompt: submittedPrompt,
+				lyrics: submittedLyrics
+			});
+
 			prompt = '';
 			lyrics = '';
 			instrumental = false;

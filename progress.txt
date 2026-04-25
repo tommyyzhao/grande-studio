@@ -138,6 +138,11 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - wavesurfer.js must be dynamically imported (`await import('wavesurfer.js')`) to avoid SSR issues — it needs DOM APIs
 - `BlockAsset` type in `src/lib/types.ts` — client-safe audio asset representation for block card props (id, title, prompt, durationSec, provider, format, status, createdAt)
 - BlockCard component at `src/lib/components/block-card.svelte` — accepts `asset: BlockAsset`, `audioUrl: string`, optional `onTitleChange` callback
+- BlockList component at `src/lib/components/block-list.svelte` — manages asset list state, SSE-driven updates, exports `addBlock()` for parent to insert new blocks
+- Audio URL for ready assets: `/api/audio/{assetId}` — endpoint at `src/routes/api/audio/[assetId]/+server.ts` redirects to signed R2 URL
+- `+page.server.ts` loads assets via left join of `audioAssets` + `generationJobs` to get `jobId` and `errorCode` per asset
+- GeneratePanel `onGenerated` callback provides `{ jobId, assetId, prompt, lyrics }` — parent creates `BlockAsset` and calls `blockList.addBlock()`
+- SSE connection managed in `+page.svelte`: `sseStore.connect()` on mount, `sseStore.disconnect()` in `onDestroy`
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -1078,4 +1083,29 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - `STATUS_CONFIG` record pattern maps asset status to visual config (label, spinner, card class, badge class) — reusable for future status displays
   - Component accepts `onRetry` and `onCancel` callbacks — parent wires these to the generate endpoint (retry creates new job, doesn't mutate failed)
   - `isLive` prop separate from status — comes from SSE store `isAssetLive()`, not from the asset record itself
+---
+
+## 2026-04-25 04:50 - US-045
+- What was implemented:
+  - Created BlockList component (`src/lib/components/block-list.svelte`) with vertical scrollable layout
+  - Updated `+page.server.ts` to load existing audio assets from DB with left join to `generation_jobs` for `jobId`/`errorCode`
+  - Added `onGenerated` callback to GeneratePanel to notify parent when generation succeeds
+  - Wired SSE store status change listener in BlockList to reactively update block card states
+  - BlockList exports `addBlock()` method for parent to insert optimistic queued blocks
+  - Created `/api/audio/[assetId]` endpoint for serving audio via signed R2 URL redirect
+  - Connected SSE store lifecycle in `+page.svelte` (connect on mount, disconnect on destroy)
+  - Empty state shows "No blocks yet. Generate your first track above."
+- Files changed:
+  - `src/routes/+page.server.ts` — added asset loading with generation_jobs join
+  - `src/routes/+page.svelte` — integrated BlockList, SSE connection, handleGenerated callback
+  - `src/lib/components/block-list.svelte` — new component (145 lines)
+  - `src/lib/components/generate-panel.svelte` — added onGenerated callback prop
+  - `src/routes/api/audio/[assetId]/+server.ts` — new audio serving endpoint
+  - `prd.json` — marked US-045 as passing
+- **Learnings for future iterations:**
+  - Svelte 5 `$state` initialized from a prop triggers "state_referenced_locally" warning — use `$effect` with hydration guard instead
+  - `bind:this` on custom Svelte 5 components gives access to exported functions (e.g., `blockList.addBlock()`)
+  - Left join `generationJobs` on `resultingAssetId` is the way to link assets to their job metadata
+  - SSE listener in `$effect` must return the unsubscribe function for proper cleanup
+  - `durationSec` from Drizzle is `numeric` type (string) — convert to `Number()` when building `BlockAsset`
 ---

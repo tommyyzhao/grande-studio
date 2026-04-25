@@ -6,9 +6,12 @@
 	import { Input } from '$lib/components/ui/input';
 	import GeneratePanel from '$lib/components/generate-panel.svelte';
 	import TransportBar from '$lib/components/transport-bar.svelte';
+	import BlockList from '$lib/components/block-list.svelte';
 	import { createAudioEngine } from '$lib/audio-engine/engine';
 	import { createArrangementEngineBridge } from '$lib/stores/arrangement-engine-bridge.svelte';
 	import { arrangementStore } from '$lib/stores/arrangement.svelte';
+	import { sseStore } from '$lib/stores/sse.svelte';
+	import type { BlockAsset } from '$lib/types';
 
 	let { data } = $props();
 
@@ -16,9 +19,33 @@
 	const audioEngine = createAudioEngine();
 	createArrangementEngineBridge(audioEngine, arrangementStore);
 
+	// ─── SSE connection ──────────────────────────────────────────────────
+	sseStore.connect();
+
 	onDestroy(() => {
 		audioEngine.dispose();
+		sseStore.disconnect();
 	});
+
+	// ─── Block list ref ──────────────────────────────────────────────────
+	let blockList = $state<ReturnType<typeof BlockList> | null>(null);
+
+	function handleGenerated(result: { jobId: string; assetId: string; prompt: string; lyrics: string | null }) {
+		const newBlock: BlockAsset = {
+			id: result.assetId,
+			title: result.prompt.slice(0, 50) || 'Untitled',
+			prompt: result.prompt,
+			lyrics: result.lyrics,
+			durationSec: null,
+			provider: 'minimax',
+			format: null,
+			status: 'created',
+			createdAt: new Date().toISOString(),
+			jobId: result.jobId,
+			errorCode: null
+		};
+		blockList?.addBlock(newBlock);
+	}
 
 	// ─── Auth state ──────────────────────────────────────────────────────
 	let signingOut = $state(false);
@@ -132,14 +159,18 @@
 	<main class="flex min-h-0 flex-1 flex-col">
 		<!-- Generate Panel Area -->
 		<section class="border-border border-b px-4 py-4">
-			<GeneratePanel projectId={data.project?.id ?? null} />
+			<GeneratePanel projectId={data.project?.id ?? null} onGenerated={handleGenerated} />
 		</section>
 
 		<!-- Scrollable content area: asset list + arrangement -->
 		<div class="flex min-h-0 flex-1 flex-col overflow-y-auto md:flex-row">
 			<!-- Asset List Area -->
 			<section class="border-border flex-1 border-b px-4 py-4 md:border-r md:border-b-0">
-				<p class="text-muted-foreground text-sm">No blocks yet. Generate your first track above.</p>
+				<BlockList
+					bind:this={blockList}
+					initialAssets={data.assets}
+					engine={audioEngine}
+				/>
 			</section>
 
 			<!-- Arrangement Area -->
