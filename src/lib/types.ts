@@ -36,11 +36,16 @@ export interface BlockAsset {
 	id: string;
 	title: string;
 	prompt: string | null;
+	lyrics: string | null;
 	durationSec: number | null;
 	provider: string;
 	format: string | null;
 	status: AssetStatus;
 	createdAt: string;
+	/** The generation job ID associated with this asset (for SSE tracking, cancel, retry) */
+	jobId: string | null;
+	/** Error code from the generation job, if failed */
+	errorCode: string | null;
 }
 
 /** SSE audio-chunk event payload for live-listening */
