@@ -275,7 +275,7 @@
         "Typecheck passes"
       ],
       "priority": 15,
-      "passes": false,
+      "passes": true,
       "notes": "Failed jobs are immutable. Retry always creates a new job."
     },
     {

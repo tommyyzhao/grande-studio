@@ -38,6 +38,7 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - Payload builders exported separately from adapter for direct unit testing without fetch mocking
 - Cover/re-style source URLs must be from R2, not provider CDNs — `validateR2SourceUrl()` in adapter.ts enforces this
 - Known provider CDN domains blocked: `cdn.minimax.chat`, `cdn.minimaxi.chat`, `fileserviceupload.minimax.chat`
+- State machine services at `src/lib/services/` are pure functions with no DB dependency — use `validateAssetTransition` and `validateJobTransition` before any status update
 - `ProviderError` and `ProviderErrorCode` types at `src/lib/providers/types.ts` — all adapter methods normalize errors at the boundary
 - `decodeHexToBytes(hex)` at adapter.ts decodes hex-encoded audio to Uint8Array; strips whitespace, validates even length
 - `normalizeMiniMaxError(error)` at adapter.ts maps MiniMaxApiError → ProviderError: 401/403→auth, 429→rate_limited, 408/502/503/504→timeout, 400/1000+→validation
@@ -316,4 +317,21 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - URL fallback in `streamGenerationAudio` uses `response.arrayBuffer()` and yields a single `isFinal: true` chunk
   - Mock ReadableStream in tests: use `new ReadableStream({ pull(controller) { ... } })` with TextEncoder
   - `normalizeMiniMaxError` passes through existing `ProviderError` instances unchanged (idempotent)
+---
+
+## 2026-04-24 - US-015
+- Created asset status state machine at `src/lib/services/asset-status.ts`
+- Created job status state machine at `src/lib/services/job-status.ts`
+- Both export `validateTransition(current, next)` returning `TransitionResult` (valid or invalid with reason)
+- Asset allowed transitions: created→queued, queued→generating/failed, generating→receiving_audio/failed, receiving_audio→persisting/failed, persisting→ready/failed, ready→deleted, failed→deleted
+- Job allowed transitions: created→queued, queued→generating/cancelled, generating→receiving_audio/failed, receiving_audio→persisting/failed, persisting→succeeded/failed
+- Terminal states: asset deleted, job succeeded/failed/cancelled — no outbound transitions
+- Test files cover all allowed transitions, all disallowed transitions, and same-status rejection
+- 79 new tests (37 asset + 42 job), all 183 tests pass, typecheck passes (0 errors)
+- Files changed: src/lib/services/asset-status.ts, src/lib/services/asset-status.test.ts, src/lib/services/job-status.ts, src/lib/services/job-status.test.ts
+- **Learnings for future iterations:**
+  - State machine services at `src/lib/services/` — pure functions, no DB dependency
+  - `TransitionResult` is a discriminated union: `{ valid: true }` or `{ valid: false; reason: string }`
+  - Failed jobs/assets are immutable (except asset failed→deleted). Retry always creates a new job.
+  - Asset and job status types imported from `$lib/server/db/schema` — keep in sync if schema changes
 ---
