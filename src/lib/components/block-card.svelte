@@ -1,15 +1,41 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
+	import {
+		Play,
+		Pause,
+		ListPlus,
+		GitBranch,
+		Disc3,
+		Download,
+		MoreHorizontal
+	} from 'lucide-svelte';
 	import { Input } from '$lib/components/ui/input';
+	import { Button } from '$lib/components/ui/button';
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import type { BlockAsset } from '$lib/types';
+	import type { AudioEngine } from '$lib/audio-engine/engine';
 
 	interface Props {
 		asset: BlockAsset;
 		audioUrl: string;
+		engine?: AudioEngine;
 		onTitleChange?: (id: string, newTitle: string) => void;
+		onAddToArrangement?: (asset: BlockAsset) => void;
+		onCreateVariation?: (asset: BlockAsset) => void;
+		onCoverRestyle?: (asset: BlockAsset) => void;
+		onExport?: (asset: BlockAsset) => void;
 	}
 
-	let { asset, audioUrl, onTitleChange }: Props = $props();
+	let {
+		asset,
+		audioUrl,
+		engine,
+		onTitleChange,
+		onAddToArrangement,
+		onCoverRestyle,
+		onCreateVariation,
+		onExport
+	}: Props = $props();
 
 	// ─── Waveform ────────────────────────────────────────────────────────
 	let waveformContainer = $state<HTMLDivElement | null>(null);
@@ -128,10 +154,72 @@
 	};
 
 	let providerLabel = $derived(PROVIDER_LABELS[asset.provider] ?? asset.provider);
+
+	// ─── Play/preview state ──────────────────────────────────────────────
+	let isPreviewPlaying = $state(false);
+
+	async function handlePlayPreview() {
+		if (!engine) return;
+		if (isPreviewPlaying) {
+			await engine.pause();
+			isPreviewPlaying = false;
+			return;
+		}
+		if (!engine.hasAsset(asset.id)) {
+			await engine.loadAsset(asset.id, audioUrl);
+		}
+		await engine.play(asset.id);
+		isPreviewPlaying = true;
+	}
+
+	function handleAddToArrangement() {
+		onAddToArrangement?.(asset);
+	}
+
+	function handleCreateVariation() {
+		onCreateVariation?.(asset);
+	}
+
+	function handleCoverRestyle() {
+		onCoverRestyle?.(asset);
+	}
+
+	function handleExport() {
+		onExport?.(asset);
+	}
+
+	// ─── Long-press context menu (mobile) ────────────────────────────────
+	let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+	let contextMenuOpen = $state(false);
+
+	function handlePointerDown() {
+		longPressTimer = setTimeout(() => {
+			contextMenuOpen = true;
+		}, 500);
+	}
+
+	function handlePointerUp() {
+		if (longPressTimer) {
+			clearTimeout(longPressTimer);
+			longPressTimer = null;
+		}
+	}
+
+	function handlePointerCancel() {
+		if (longPressTimer) {
+			clearTimeout(longPressTimer);
+			longPressTimer = null;
+		}
+	}
 </script>
 
 <div
 	class="bg-card text-card-foreground ring-foreground/10 flex flex-col gap-3 rounded-xl p-4 shadow-xs ring-1"
+	onpointerdown={handlePointerDown}
+	onpointerup={handlePointerUp}
+	onpointerleave={handlePointerCancel}
+	onpointercancel={handlePointerCancel}
+	role="group"
 >
 	<!-- Waveform -->
 	<div class="relative h-12 w-full overflow-hidden rounded-md">
@@ -196,5 +284,103 @@
 				{truncatePrompt(asset.prompt)}
 			</p>
 		{/if}
+	</div>
+
+	<!-- Action buttons -->
+	<div class="flex items-center gap-1">
+		<Button
+			variant="outline"
+			size="icon-sm"
+			onclick={handlePlayPreview}
+			title={isPreviewPlaying ? 'Pause preview' : 'Play preview'}
+		>
+			{#if isPreviewPlaying}
+				<Pause class="size-4" />
+			{:else}
+				<Play class="size-4" />
+			{/if}
+		</Button>
+
+		<Button
+			variant="outline"
+			size="icon-sm"
+			onclick={handleAddToArrangement}
+			title="Add to arrangement"
+		>
+			<ListPlus class="size-4" />
+		</Button>
+
+		<Button
+			variant="outline"
+			size="icon-sm"
+			onclick={handleCreateVariation}
+			title="Create variation"
+		>
+			<GitBranch class="size-4" />
+		</Button>
+
+		<Button
+			variant="outline"
+			size="icon-sm"
+			onclick={handleCoverRestyle}
+			title="Cover / Re-style"
+		>
+			<Disc3 class="size-4" />
+		</Button>
+
+		<Button
+			variant="outline"
+			size="icon-sm"
+			onclick={handleExport}
+			title="Download"
+		>
+			<Download class="size-4" />
+		</Button>
+
+		<!-- More actions dropdown (also used by long-press on mobile) -->
+		<DropdownMenu.Root bind:open={contextMenuOpen}>
+			<DropdownMenu.Trigger>
+				{#snippet child({ props })}
+					<Button
+						{...props}
+						variant="ghost"
+						size="icon-sm"
+						class="ml-auto"
+						title="More actions"
+					>
+						<MoreHorizontal class="size-4" />
+					</Button>
+				{/snippet}
+			</DropdownMenu.Trigger>
+
+			<DropdownMenu.Content align="end">
+				<DropdownMenu.Item onclick={handlePlayPreview}>
+					{#if isPreviewPlaying}
+						<Pause class="size-4" />
+					{:else}
+						<Play class="size-4" />
+					{/if}
+					{isPreviewPlaying ? 'Pause preview' : 'Play preview'}
+				</DropdownMenu.Item>
+				<DropdownMenu.Item onclick={handleAddToArrangement}>
+					<ListPlus class="size-4" />
+					Add to arrangement
+				</DropdownMenu.Item>
+				<DropdownMenu.Separator />
+				<DropdownMenu.Item onclick={handleCreateVariation}>
+					<GitBranch class="size-4" />
+					Create variation
+				</DropdownMenu.Item>
+				<DropdownMenu.Item onclick={handleCoverRestyle}>
+					<Disc3 class="size-4" />
+					Cover / Re-style
+				</DropdownMenu.Item>
+				<DropdownMenu.Separator />
+				<DropdownMenu.Item onclick={handleExport}>
+					<Download class="size-4" />
+					Download
+				</DropdownMenu.Item>
+			</DropdownMenu.Content>
+		</DropdownMenu.Root>
 	</div>
 </div>

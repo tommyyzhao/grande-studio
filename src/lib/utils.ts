@@ -20,3 +20,7 @@ export type WithoutChildrenOrChild<T> = T extends { children?: unknown; child?: 
 		: T extends { child?: unknown }
 			? Omit<T, "child">
 			: T;
+
+export type WithoutChild<T> = T extends { child?: unknown }
+	? Omit<T, "child">
+	: T;

@@ -3,7 +3,9 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 ---
 
 ## Codebase Patterns
-- New shadcn-svelte components may need `WithoutChildrenOrChild` type in `src/lib/utils.ts` — add it if typecheck fails after installing components
+- New shadcn-svelte components may need `WithoutChildrenOrChild` type and/or `WithoutChild` type in `src/lib/utils.ts` — add if typecheck fails after installing components
+- shadcn-svelte v1.2.7 generates `@lucide/svelte/icons/*` imports — project uses `lucide-svelte`, fix imports to `import { Icon } from 'lucide-svelte'`
+- bits-ui v2 uses `child` snippet pattern, NOT `asChild` prop — `{#snippet child({ props })} <Element {...props}> {/snippet}`
 - `MINIMAX_MAX_LYRICS_LENGTH` exported from `src/lib/providers/minimax/validateMusicRequest.ts` — reuse in UI for character count limits
 - Workspace lives at root route `/` — `+page.server.ts` handles project find-or-create; `+page.svelte` is the full workspace layout
 - PATCH /api/project endpoint updates project title — uses same `getDb()` + `withRLS` pattern as other endpoints
@@ -1027,4 +1029,30 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - Use `$effect` with cleanup return to manage wavesurfer lifecycle — destroy on URL/container changes and unmount
   - `line-clamp-2` Tailwind utility truncates multi-line text with ellipsis (for prompt summary)
   - Provider labels map at block-card component: `minimax` → 'MiniMax', etc.
+---
+
+## 2026-04-25 04:35 - US-043
+- Added action buttons to ready block card: play preview, add to arrangement, create variation, cover/re-style, download
+- Each action is a shadcn-svelte icon button (outline variant, icon-sm size) with lucide-svelte icons
+- Play preview button toggles play/pause via AudioEngine (loads asset on first play, single-asset mode)
+- All action handlers delegate to optional callback props (onAddToArrangement, onCreateVariation, onCoverRestyle, onExport) — wired in later stories
+- Added "More actions" dropdown menu (MoreHorizontal icon) with all actions duplicated as menu items with labels
+- Long-press on mobile (500ms) programmatically opens the dropdown menu via `contextMenuOpen` state binding
+- Installed shadcn-svelte dropdown-menu component; fixed icon imports from `@lucide/svelte/icons/*` → `lucide-svelte`
+- Added `WithoutChild` type export to `src/lib/utils.ts` (required by dropdown-menu-radio-item component)
+- Files changed:
+  - `src/lib/components/block-card.svelte` (updated — action buttons, dropdown menu, play/preview, long-press)
+  - `src/lib/components/ui/dropdown-menu/` (new — shadcn-svelte dropdown-menu component)
+  - `src/lib/components/ui/dropdown-menu/dropdown-menu-checkbox-item.svelte` (fixed lucide import)
+  - `src/lib/components/ui/dropdown-menu/dropdown-menu-radio-item.svelte` (fixed lucide import)
+  - `src/lib/components/ui/dropdown-menu/dropdown-menu-sub-trigger.svelte` (fixed lucide import)
+  - `src/lib/utils.ts` (added WithoutChild type)
+  - `prd.json` (marked US-043 as passing)
+- **Learnings for future iterations:**
+  - shadcn-svelte v1.2.7 generates `@lucide/svelte/icons/*` imports — project uses `lucide-svelte` package instead, so imports need manual fix
+  - `WithoutChild` type also needed in utils.ts for dropdown-menu-radio-item component
+  - bits-ui v2 DropdownMenu.Trigger does NOT support `asChild` prop — use `child` snippet pattern: `{#snippet child({ props })} <Button {...props}> {/snippet}`
+  - Long-press for mobile context menu: `setTimeout(500)` on pointerdown, clear on pointerup/leave/cancel, sets dropdown `bind:open` state
+  - Block card action callbacks follow `on[Action]?: (asset: BlockAsset) => void` pattern for parent components to wire
+  - AudioEngine `play(assetId)` for single-asset preview mode; `hasAsset()` + `loadAsset()` for lazy loading
 ---
