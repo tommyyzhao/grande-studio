@@ -58,6 +58,26 @@ export interface ProviderAudioChunk {
 	isFinal: boolean;
 }
 
+// ─── Provider Error Types ──────────────────────────────────────────────────
+
+export type ProviderErrorCode =
+	| 'provider_timeout'
+	| 'provider_validation_error'
+	| 'provider_auth_error'
+	| 'provider_rate_limited';
+
+export class ProviderError extends Error {
+	constructor(
+		message: string,
+		public readonly code: ProviderErrorCode,
+		public readonly providerStatusCode?: number,
+		public readonly providerResponse?: string
+	) {
+		super(message);
+		this.name = 'ProviderError';
+	}
+}
+
 // ─── Music Provider Interface ──────────────────────────────────────────────
 
 export interface MusicProvider {

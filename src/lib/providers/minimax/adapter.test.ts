@@ -5,12 +5,21 @@ import {
 	buildInstrumentalPayload,
 	buildCoverRestylePayload,
 	validateR2SourceUrl,
+	decodeHexToBytes,
+	normalizeMiniMaxError,
+	parseStreamLines,
 	MiniMaxApiError,
 	type MiniMaxMusicResponse
 } from './adapter';
-import type { TextToMusicInput, InstrumentalGenerationInput, CoverRestyleInput } from '../types';
+import { ProviderError } from '../types';
+import type {
+	TextToMusicInput,
+	InstrumentalGenerationInput,
+	CoverRestyleInput,
+	ProviderGenerationHandle
+} from '../types';
 
-// ─── Mock fetch ─────────────────────────────────────────────────────────────
+// ─── Mock Helpers ──────────────────────────────────────────────────────────
 
 function createMockResponse(data: MiniMaxMusicResponse): Response {
 	return {
@@ -35,6 +44,295 @@ function createSuccessResponse(taskId = 'task-123'): MiniMaxMusicResponse {
 		}
 	};
 }
+
+function createMockStream(chunks: string[]): ReadableStream<Uint8Array> {
+	const encoder = new TextEncoder();
+	let index = 0;
+	return new ReadableStream({
+		pull(controller) {
+			if (index < chunks.length) {
+				controller.enqueue(encoder.encode(chunks[index]));
+				index++;
+			} else {
+				controller.close();
+			}
+		}
+	});
+}
+
+function createStreamingHandle(taskId = 'task-stream-001'): ProviderGenerationHandle {
+	return {
+		providerJobId: taskId,
+		supportsStreaming: true,
+		metadata: { hasHexAudio: true }
+	};
+}
+
+function createUrlHandle(
+	taskId = 'task-url-001',
+	audioUrl = 'https://cdn.minimax.chat/audio/output.mp3'
+): ProviderGenerationHandle {
+	return {
+		providerJobId: taskId,
+		supportsStreaming: false,
+		metadata: { audioUrl, hasHexAudio: false }
+	};
+}
+
+async function collectChunks(
+	gen: AsyncGenerator<{ data: Uint8Array; sequence: number; isFinal: boolean }>
+) {
+	const chunks: { data: Uint8Array; sequence: number; isFinal: boolean }[] = [];
+	for await (const chunk of gen) {
+		chunks.push(chunk);
+	}
+	return chunks;
+}
+
+// ─── Hex Decoding Tests ───────────────────────────────────────────────────
+
+describe('decodeHexToBytes', () => {
+	it('decodes valid hex string', () => {
+		const result = decodeHexToBytes('48656c6c6f');
+		expect(result).toEqual(new Uint8Array([0x48, 0x65, 0x6c, 0x6c, 0x6f]));
+	});
+
+	it('returns empty array for empty string', () => {
+		const result = decodeHexToBytes('');
+		expect(result).toEqual(new Uint8Array(0));
+	});
+
+	it('throws on odd-length hex string', () => {
+		expect(() => decodeHexToBytes('abc')).toThrow('odd number of characters');
+	});
+
+	it('handles uppercase hex', () => {
+		const result = decodeHexToBytes('DEADBEEF');
+		expect(result).toEqual(new Uint8Array([0xde, 0xad, 0xbe, 0xef]));
+	});
+
+	it('handles mixed case hex', () => {
+		const result = decodeHexToBytes('DeAdBeEf');
+		expect(result).toEqual(new Uint8Array([0xde, 0xad, 0xbe, 0xef]));
+	});
+
+	it('strips whitespace before decoding', () => {
+		const result = decodeHexToBytes('48 65 6c 6c 6f');
+		expect(result).toEqual(new Uint8Array([0x48, 0x65, 0x6c, 0x6c, 0x6f]));
+	});
+});
+
+// ─── Error Normalization Tests ─────────────────────────────────────────────
+
+describe('normalizeMiniMaxError', () => {
+	it('maps HTTP 401 to provider_auth_error', () => {
+		const error = new MiniMaxApiError('Unauthorized', 401, 'Invalid API key');
+		const result = normalizeMiniMaxError(error);
+		expect(result).toBeInstanceOf(ProviderError);
+		expect(result.code).toBe('provider_auth_error');
+		expect(result.providerStatusCode).toBe(401);
+		expect(result.providerResponse).toBe('Invalid API key');
+	});
+
+	it('maps HTTP 403 to provider_auth_error', () => {
+		const error = new MiniMaxApiError('Forbidden', 403, 'Access denied');
+		const result = normalizeMiniMaxError(error);
+		expect(result.code).toBe('provider_auth_error');
+		expect(result.providerStatusCode).toBe(403);
+	});
+
+	it('maps HTTP 429 to provider_rate_limited', () => {
+		const error = new MiniMaxApiError('Too Many Requests', 429, 'Rate limited');
+		const result = normalizeMiniMaxError(error);
+		expect(result.code).toBe('provider_rate_limited');
+		expect(result.providerStatusCode).toBe(429);
+	});
+
+	it('maps HTTP 400 to provider_validation_error', () => {
+		const error = new MiniMaxApiError('Bad Request', 400, 'Invalid parameter');
+		const result = normalizeMiniMaxError(error);
+		expect(result.code).toBe('provider_validation_error');
+		expect(result.providerStatusCode).toBe(400);
+	});
+
+	it('maps HTTP 408 to provider_timeout', () => {
+		const error = new MiniMaxApiError('Request Timeout', 408, '');
+		const result = normalizeMiniMaxError(error);
+		expect(result.code).toBe('provider_timeout');
+	});
+
+	it('maps HTTP 502 to provider_timeout', () => {
+		const error = new MiniMaxApiError('Bad Gateway', 502, '');
+		const result = normalizeMiniMaxError(error);
+		expect(result.code).toBe('provider_timeout');
+	});
+
+	it('maps HTTP 503 to provider_timeout', () => {
+		const error = new MiniMaxApiError('Service Unavailable', 503, '');
+		const result = normalizeMiniMaxError(error);
+		expect(result.code).toBe('provider_timeout');
+	});
+
+	it('maps HTTP 504 to provider_timeout', () => {
+		const error = new MiniMaxApiError('Gateway Timeout', 504, '');
+		const result = normalizeMiniMaxError(error);
+		expect(result.code).toBe('provider_timeout');
+	});
+
+	it('maps MiniMax status code 1001 to provider_validation_error', () => {
+		const error = new MiniMaxApiError('Invalid parameter', 1001, '{"status_code":1001}');
+		const result = normalizeMiniMaxError(error);
+		expect(result.code).toBe('provider_validation_error');
+		expect(result.providerStatusCode).toBe(1001);
+	});
+
+	it('maps network TypeError to provider_timeout', () => {
+		const error = new TypeError('Failed to fetch');
+		const result = normalizeMiniMaxError(error);
+		expect(result.code).toBe('provider_timeout');
+		expect(result.message).toContain('network error');
+	});
+
+	it('maps AbortError to provider_timeout', () => {
+		const error = new DOMException('The operation was aborted', 'AbortError');
+		const result = normalizeMiniMaxError(error);
+		expect(result.code).toBe('provider_timeout');
+	});
+
+	it('passes through existing ProviderError unchanged', () => {
+		const original = new ProviderError('Already normalized', 'provider_auth_error', 401);
+		const result = normalizeMiniMaxError(original);
+		expect(result).toBe(original);
+	});
+
+	it('maps unknown error to provider_validation_error', () => {
+		const error = new Error('Something unexpected');
+		const result = normalizeMiniMaxError(error);
+		expect(result.code).toBe('provider_validation_error');
+		expect(result.message).toContain('Something unexpected');
+	});
+
+	it('maps non-Error values to provider_validation_error', () => {
+		const result = normalizeMiniMaxError('string error');
+		expect(result.code).toBe('provider_validation_error');
+		expect(result.message).toContain('string error');
+	});
+});
+
+// ─── Stream Parsing Tests ──────────────────────────────────────────────────
+
+describe('parseStreamLines', () => {
+	it('parses plain JSON lines with audio hex data', async () => {
+		const stream = createMockStream([
+			'{"audio":"48656c6c6f"}\n',
+			'{"audio":"576f726c64","is_final":true}\n'
+		]);
+		const chunks: { hex: string; isFinal: boolean }[] = [];
+		for await (const chunk of parseStreamLines(stream)) {
+			chunks.push(chunk);
+		}
+		expect(chunks).toEqual([
+			{ hex: '48656c6c6f', isFinal: false },
+			{ hex: '576f726c64', isFinal: true }
+		]);
+	});
+
+	it('parses SSE-prefixed lines', async () => {
+		const stream = createMockStream([
+			'data: {"audio":"aabbccdd"}\n',
+			'data: {"audio":"eeff0011","is_final":true}\n'
+		]);
+		const chunks: { hex: string; isFinal: boolean }[] = [];
+		for await (const chunk of parseStreamLines(stream)) {
+			chunks.push(chunk);
+		}
+		expect(chunks).toEqual([
+			{ hex: 'aabbccdd', isFinal: false },
+			{ hex: 'eeff0011', isFinal: true }
+		]);
+	});
+
+	it('handles nested data.audio format', async () => {
+		const stream = createMockStream([
+			'{"data":{"audio":"deadbeef"}}\n',
+			'{"data":{"audio":"cafebabe","status":2}}\n'
+		]);
+		const chunks: { hex: string; isFinal: boolean }[] = [];
+		for await (const chunk of parseStreamLines(stream)) {
+			chunks.push(chunk);
+		}
+		expect(chunks).toEqual([
+			{ hex: 'deadbeef', isFinal: false },
+			{ hex: 'cafebabe', isFinal: true }
+		]);
+	});
+
+	it('terminates on [DONE] marker', async () => {
+		const stream = createMockStream([
+			'data: {"audio":"aabbccdd"}\n',
+			'data: [DONE]\n',
+			'data: {"audio":"should_not_appear"}\n'
+		]);
+		const chunks: { hex: string; isFinal: boolean }[] = [];
+		for await (const chunk of parseStreamLines(stream)) {
+			chunks.push(chunk);
+		}
+		expect(chunks).toEqual([{ hex: 'aabbccdd', isFinal: false }]);
+	});
+
+	it('skips empty lines and SSE comments', async () => {
+		const stream = createMockStream([
+			': this is a comment\n',
+			'\n',
+			'{"audio":"aabb"}\n',
+			'\n',
+			'{"audio":"ccdd","is_final":true}\n'
+		]);
+		const chunks: { hex: string; isFinal: boolean }[] = [];
+		for await (const chunk of parseStreamLines(stream)) {
+			chunks.push(chunk);
+		}
+		expect(chunks).toEqual([
+			{ hex: 'aabb', isFinal: false },
+			{ hex: 'ccdd', isFinal: true }
+		]);
+	});
+
+	it('handles chunks split across stream reads', async () => {
+		// The JSON line is split across two stream chunks
+		const stream = createMockStream([
+			'{"audio":"aa',
+			'bb"}\n{"audio":"ccdd","is_final":true}\n'
+		]);
+		const chunks: { hex: string; isFinal: boolean }[] = [];
+		for await (const chunk of parseStreamLines(stream)) {
+			chunks.push(chunk);
+		}
+		expect(chunks).toEqual([
+			{ hex: 'aabb', isFinal: false },
+			{ hex: 'ccdd', isFinal: true }
+		]);
+	});
+
+	it('flushes remaining buffer at end of stream', async () => {
+		// Last line has no trailing newline
+		const stream = createMockStream(['{"audio":"aabbccdd"}']);
+		const chunks: { hex: string; isFinal: boolean }[] = [];
+		for await (const chunk of parseStreamLines(stream)) {
+			chunks.push(chunk);
+		}
+		expect(chunks).toEqual([{ hex: 'aabbccdd', isFinal: true }]);
+	});
+
+	it('handles empty stream', async () => {
+		const stream = createMockStream([]);
+		const chunks: { hex: string; isFinal: boolean }[] = [];
+		for await (const chunk of parseStreamLines(stream)) {
+			chunks.push(chunk);
+		}
+		expect(chunks).toEqual([]);
+	});
+});
 
 // ─── Payload Builder Tests ──────────────────────────────────────────────────
 
@@ -455,7 +753,7 @@ describe('createMiniMaxAdapter', () => {
 					prompt: 'Make it jazzy',
 					sourceAudioUrl: 'https://cdn.minimaxi.chat/audio/task-123.mp3'
 				})
-			).rejects.toThrow('Invalid source audio URL');
+			).rejects.toThrow(ProviderError);
 
 			expect(fetchSpy).not.toHaveBeenCalled();
 		});
@@ -463,7 +761,10 @@ describe('createMiniMaxAdapter', () => {
 		it('returns handle with metadata from cover response', async () => {
 			const mockResponse: MiniMaxMusicResponse = {
 				base_resp: { status_code: 0, status_msg: 'success' },
-				data: { task_id: 'task-cover-meta', audio_url: 'https://cdn.minimaxi.chat/cover-out.mp3' },
+				data: {
+					task_id: 'task-cover-meta',
+					audio_url: 'https://cdn.minimaxi.chat/cover-out.mp3'
+				},
 				extra_info: {
 					audio_format: 'mp3',
 					audio_sample_rate: 44100,
@@ -501,12 +802,12 @@ describe('createMiniMaxAdapter', () => {
 					prompt: 'Make it jazzy',
 					sourceAudioUrl: 'https://r2.example.com/audio/source.mp3'
 				})
-			).rejects.toThrow(MiniMaxApiError);
+			).rejects.toThrow(ProviderError);
 		});
 	});
 
-	describe('error handling', () => {
-		it('throws MiniMaxApiError on HTTP error', async () => {
+	describe('error handling (normalized)', () => {
+		it('throws ProviderError with provider_auth_error on HTTP 401', async () => {
 			fetchSpy.mockResolvedValueOnce({
 				ok: false,
 				status: 401,
@@ -515,16 +816,43 @@ describe('createMiniMaxAdapter', () => {
 			} as Response);
 
 			const adapter = createMiniMaxAdapter('bad-key');
-			await expect(
-				adapter.generateTextToMusic({
+			try {
+				await adapter.generateTextToMusic({
 					prompt: 'A song',
 					lyrics: 'Lyrics',
 					instrumental: false
-				})
-			).rejects.toThrow(MiniMaxApiError);
+				});
+				expect.fail('Should have thrown');
+			} catch (error) {
+				expect(error).toBeInstanceOf(ProviderError);
+				expect((error as ProviderError).code).toBe('provider_auth_error');
+				expect((error as ProviderError).providerStatusCode).toBe(401);
+			}
 		});
 
-		it('throws MiniMaxApiError on non-zero status_code in response', async () => {
+		it('throws ProviderError with provider_rate_limited on HTTP 429', async () => {
+			fetchSpy.mockResolvedValueOnce({
+				ok: false,
+				status: 429,
+				statusText: 'Too Many Requests',
+				text: () => Promise.resolve('Rate limited')
+			} as Response);
+
+			const adapter = createMiniMaxAdapter('test-api-key');
+			try {
+				await adapter.generateTextToMusic({
+					prompt: 'A song',
+					lyrics: 'Lyrics',
+					instrumental: false
+				});
+				expect.fail('Should have thrown');
+			} catch (error) {
+				expect(error).toBeInstanceOf(ProviderError);
+				expect((error as ProviderError).code).toBe('provider_rate_limited');
+			}
+		});
+
+		it('throws ProviderError with provider_validation_error on non-zero status_code', async () => {
 			fetchSpy.mockResolvedValueOnce(
 				createMockResponse({
 					base_resp: { status_code: 1001, status_msg: 'Invalid parameter' },
@@ -533,13 +861,36 @@ describe('createMiniMaxAdapter', () => {
 			);
 
 			const adapter = createMiniMaxAdapter('test-api-key');
-			await expect(
-				adapter.generateTextToMusic({
+			try {
+				await adapter.generateTextToMusic({
 					prompt: 'A song',
 					lyrics: 'Lyrics',
 					instrumental: false
-				})
-			).rejects.toThrow(MiniMaxApiError);
+				});
+				expect.fail('Should have thrown');
+			} catch (error) {
+				expect(error).toBeInstanceOf(ProviderError);
+				expect((error as ProviderError).code).toBe('provider_validation_error');
+				expect((error as ProviderError).providerStatusCode).toBe(1001);
+			}
+		});
+
+		it('throws ProviderError with provider_timeout on HTTP 504', async () => {
+			fetchSpy.mockResolvedValueOnce({
+				ok: false,
+				status: 504,
+				statusText: 'Gateway Timeout',
+				text: () => Promise.resolve('Timeout')
+			} as Response);
+
+			const adapter = createMiniMaxAdapter('test-api-key');
+			try {
+				await adapter.generateInstrumental({ prompt: 'A beat' });
+				expect.fail('Should have thrown');
+			} catch (error) {
+				expect(error).toBeInstanceOf(ProviderError);
+				expect((error as ProviderError).code).toBe('provider_timeout');
+			}
 		});
 	});
 
@@ -594,6 +945,200 @@ describe('createMiniMaxAdapter', () => {
 			});
 
 			expect(handle.supportsStreaming).toBe(false);
+		});
+	});
+
+	// ─── Streaming Audio Tests ──────────────────────────────────────────────
+
+	describe('streamGenerationAudio', () => {
+		describe('streaming mode', () => {
+			it('yields decoded hex chunks with correct sequence numbers', async () => {
+				const stream = createMockStream([
+					'{"audio":"48656c6c6f"}\n',
+					'{"audio":"576f726c64","is_final":true}\n'
+				]);
+
+				fetchSpy.mockResolvedValueOnce({
+					ok: true,
+					status: 200,
+					body: stream
+				} as Response);
+
+				const adapter = createMiniMaxAdapter('test-api-key');
+				const handle = createStreamingHandle();
+				const chunks = await collectChunks(adapter.streamGenerationAudio!(handle));
+
+				expect(chunks).toHaveLength(2);
+				expect(chunks[0].data).toEqual(new Uint8Array([0x48, 0x65, 0x6c, 0x6c, 0x6f]));
+				expect(chunks[0].sequence).toBe(0);
+				expect(chunks[0].isFinal).toBe(false);
+				expect(chunks[1].data).toEqual(new Uint8Array([0x57, 0x6f, 0x72, 0x6c, 0x64]));
+				expect(chunks[1].sequence).toBe(1);
+				expect(chunks[1].isFinal).toBe(true);
+			});
+
+			it('sends correct streaming request with auth header', async () => {
+				const stream = createMockStream(['{"audio":"aabb","is_final":true}\n']);
+				fetchSpy.mockResolvedValueOnce({
+					ok: true,
+					status: 200,
+					body: stream
+				} as Response);
+
+				const adapter = createMiniMaxAdapter('my-secret-key');
+				const handle = createStreamingHandle('task-42');
+				await collectChunks(adapter.streamGenerationAudio!(handle));
+
+				expect(fetchSpy).toHaveBeenCalledOnce();
+				const [url, options] = fetchSpy.mock.calls[0];
+				expect(url).toContain('task_id=task-42');
+				expect((options as RequestInit).headers).toEqual(
+					expect.objectContaining({
+						Authorization: 'Bearer my-secret-key'
+					})
+				);
+			});
+
+			it('detects stream termination via is_final flag', async () => {
+				const stream = createMockStream([
+					'{"audio":"aa"}\n',
+					'{"audio":"bb"}\n',
+					'{"audio":"cc","is_final":true}\n',
+					'{"audio":"dd"}\n' // should not appear
+				]);
+				fetchSpy.mockResolvedValueOnce({ ok: true, status: 200, body: stream } as Response);
+
+				const adapter = createMiniMaxAdapter('test-api-key');
+				const chunks = await collectChunks(
+					adapter.streamGenerationAudio!(createStreamingHandle())
+				);
+
+				expect(chunks).toHaveLength(3);
+				expect(chunks[2].isFinal).toBe(true);
+			});
+
+			it('detects stream termination via [DONE] marker', async () => {
+				const stream = createMockStream([
+					'data: {"audio":"aabb"}\n',
+					'data: [DONE]\n',
+					'data: {"audio":"ccdd"}\n' // should not appear
+				]);
+				fetchSpy.mockResolvedValueOnce({ ok: true, status: 200, body: stream } as Response);
+
+				const adapter = createMiniMaxAdapter('test-api-key');
+				const chunks = await collectChunks(
+					adapter.streamGenerationAudio!(createStreamingHandle())
+				);
+
+				expect(chunks).toHaveLength(1);
+				expect(chunks[0].data).toEqual(new Uint8Array([0xaa, 0xbb]));
+			});
+
+			it('normalizes errors during streaming fetch', async () => {
+				fetchSpy.mockResolvedValueOnce({
+					ok: false,
+					status: 401,
+					statusText: 'Unauthorized',
+					text: () => Promise.resolve('Bad auth')
+				} as Response);
+
+				const adapter = createMiniMaxAdapter('bad-key');
+				try {
+					await collectChunks(
+						adapter.streamGenerationAudio!(createStreamingHandle())
+					);
+					expect.fail('Should have thrown');
+				} catch (error) {
+					expect(error).toBeInstanceOf(ProviderError);
+					expect((error as ProviderError).code).toBe('provider_auth_error');
+				}
+			});
+
+			it('throws ProviderError when response has no body', async () => {
+				fetchSpy.mockResolvedValueOnce({
+					ok: true,
+					status: 200,
+					body: null
+				} as Response);
+
+				const adapter = createMiniMaxAdapter('test-api-key');
+				try {
+					await collectChunks(
+						adapter.streamGenerationAudio!(createStreamingHandle())
+					);
+					expect.fail('Should have thrown');
+				} catch (error) {
+					expect(error).toBeInstanceOf(ProviderError);
+					expect((error as ProviderError).code).toBe('provider_validation_error');
+					expect((error as ProviderError).message).toContain('no body');
+				}
+			});
+		});
+
+		describe('URL fallback', () => {
+			it('fetches URL and yields single chunk when supportsStreaming=false', async () => {
+				const audioBytes = new Uint8Array([0x49, 0x44, 0x33]); // ID3 header
+				fetchSpy.mockResolvedValueOnce({
+					ok: true,
+					status: 200,
+					arrayBuffer: () => Promise.resolve(audioBytes.buffer)
+				} as Response);
+
+				const adapter = createMiniMaxAdapter('test-api-key');
+				const handle = createUrlHandle('task-url', 'https://cdn.example.com/audio.mp3');
+				const chunks = await collectChunks(adapter.streamGenerationAudio!(handle));
+
+				expect(chunks).toHaveLength(1);
+				expect(chunks[0].data).toEqual(audioBytes);
+				expect(chunks[0].sequence).toBe(0);
+				expect(chunks[0].isFinal).toBe(true);
+
+				// Verify the fetch was made to the audio URL
+				expect(fetchSpy).toHaveBeenCalledWith('https://cdn.example.com/audio.mp3');
+			});
+
+			it('throws ProviderError when no URL available and supportsStreaming=false', async () => {
+				const adapter = createMiniMaxAdapter('test-api-key');
+				const handle: ProviderGenerationHandle = {
+					providerJobId: 'task-no-url',
+					supportsStreaming: false,
+					metadata: { hasHexAudio: false }
+				};
+
+				try {
+					await collectChunks(adapter.streamGenerationAudio!(handle));
+					expect.fail('Should have thrown');
+				} catch (error) {
+					expect(error).toBeInstanceOf(ProviderError);
+					expect((error as ProviderError).code).toBe('provider_validation_error');
+					expect((error as ProviderError).message).toContain(
+						'No streaming audio or download URL'
+					);
+				}
+			});
+
+			it('normalizes fetch errors in URL fallback', async () => {
+				fetchSpy.mockResolvedValueOnce({
+					ok: false,
+					status: 503,
+					statusText: 'Service Unavailable',
+					text: () => Promise.resolve('Server error')
+				} as Response);
+
+				const adapter = createMiniMaxAdapter('test-api-key');
+				const handle = createUrlHandle(
+					'task-url-err',
+					'https://cdn.example.com/audio.mp3'
+				);
+
+				try {
+					await collectChunks(adapter.streamGenerationAudio!(handle));
+					expect.fail('Should have thrown');
+				} catch (error) {
+					expect(error).toBeInstanceOf(ProviderError);
+					expect((error as ProviderError).code).toBe('provider_timeout');
+				}
+			});
 		});
 	});
 });

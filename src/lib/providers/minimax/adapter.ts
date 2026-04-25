@@ -1,10 +1,11 @@
-import type {
-	MusicProvider,
-	TextToMusicInput,
-	InstrumentalGenerationInput,
-	CoverRestyleInput,
-	ProviderGenerationHandle,
-	ProviderAudioChunk
+import {
+	ProviderError,
+	type MusicProvider,
+	type TextToMusicInput,
+	type InstrumentalGenerationInput,
+	type CoverRestyleInput,
+	type ProviderGenerationHandle,
+	type ProviderAudioChunk
 } from '../types';
 
 // ─── MiniMax API Constants ──────────────────────────────────────────────────
@@ -184,6 +185,174 @@ export class MiniMaxApiError extends Error {
 	}
 }
 
+// ─── Hex Decoding ──────────────────────────────────────────────────────────
+
+/**
+ * Decodes a hex-encoded string into a Uint8Array of audio bytes.
+ */
+export function decodeHexToBytes(hex: string): Uint8Array {
+	const clean = hex.replace(/\s/g, '');
+	if (clean.length === 0) {
+		return new Uint8Array(0);
+	}
+	if (clean.length % 2 !== 0) {
+		throw new Error('Invalid hex string: odd number of characters');
+	}
+	const bytes = new Uint8Array(clean.length / 2);
+	for (let i = 0; i < clean.length; i += 2) {
+		const byte = parseInt(clean.substring(i, i + 2), 16);
+		if (isNaN(byte)) {
+			throw new Error(`Invalid hex character at position ${i}`);
+		}
+		bytes[i / 2] = byte;
+	}
+	return bytes;
+}
+
+// ─── Error Normalization ───────────────────────────────────────────────────
+
+/**
+ * Normalizes MiniMax-specific errors into typed ProviderError objects.
+ * Maps HTTP status codes and MiniMax application error codes to provider error codes.
+ */
+export function normalizeMiniMaxError(error: unknown): ProviderError {
+	if (error instanceof ProviderError) {
+		return error;
+	}
+
+	if (error instanceof MiniMaxApiError) {
+		// HTTP 401/403 → auth error
+		if (error.statusCode === 401 || error.statusCode === 403) {
+			return new ProviderError(
+				'MiniMax authentication failed',
+				'provider_auth_error',
+				error.statusCode,
+				error.responseBody
+			);
+		}
+		// HTTP 429 → rate limited
+		if (error.statusCode === 429) {
+			return new ProviderError(
+				'MiniMax rate limit exceeded',
+				'provider_rate_limited',
+				error.statusCode,
+				error.responseBody
+			);
+		}
+		// HTTP 408/502/503/504 → timeout / server unavailable
+		if ([408, 502, 503, 504].includes(error.statusCode)) {
+			return new ProviderError(
+				'MiniMax request timed out or server unavailable',
+				'provider_timeout',
+				error.statusCode,
+				error.responseBody
+			);
+		}
+		// HTTP 400 or MiniMax application error codes (1000+) → validation error
+		if (error.statusCode === 400 || error.statusCode >= 1000) {
+			return new ProviderError(
+				`MiniMax validation error: ${error.message}`,
+				'provider_validation_error',
+				error.statusCode,
+				error.responseBody
+			);
+		}
+		// All other HTTP errors → validation as catch-all
+		return new ProviderError(
+			`MiniMax error: ${error.message}`,
+			'provider_validation_error',
+			error.statusCode,
+			error.responseBody
+		);
+	}
+
+	// Network errors (fetch failed) → timeout
+	if (error instanceof TypeError && error.message.toLowerCase().includes('fetch')) {
+		return new ProviderError('MiniMax request failed: network error', 'provider_timeout');
+	}
+
+	// Abort errors → timeout
+	if (error instanceof DOMException && error.name === 'AbortError') {
+		return new ProviderError('MiniMax request timed out', 'provider_timeout');
+	}
+
+	// Unknown errors → validation as catch-all
+	const message = error instanceof Error ? error.message : String(error);
+	return new ProviderError(`MiniMax error: ${message}`, 'provider_validation_error');
+}
+
+// ─── Stream Chunk Parsing ──────────────────────────────────────────────────
+
+/**
+ * Parses a MiniMax streaming response body into hex audio chunks.
+ * Handles both SSE-prefixed ("data: {...}") and plain JSON line formats.
+ */
+export async function* parseStreamLines(
+	body: ReadableStream<Uint8Array>
+): AsyncGenerator<{ hex: string; isFinal: boolean }> {
+	const reader = body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = '';
+
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+
+			buffer += decoder.decode(value, { stream: true });
+
+			const lines = buffer.split('\n');
+			buffer = lines.pop() ?? '';
+
+			for (const line of lines) {
+				const trimmed = line.trim();
+				if (!trimmed || trimmed.startsWith(':')) continue;
+
+				const data = trimmed.startsWith('data: ') ? trimmed.slice(6) : trimmed;
+				if (data === '[DONE]') return;
+
+				try {
+					const parsed = JSON.parse(data) as {
+						data?: { audio?: string; status?: number };
+						audio?: string;
+						is_final?: boolean;
+					};
+					const audio = parsed.data?.audio ?? parsed.audio;
+					if (audio) {
+						const isFinal = parsed.is_final === true || parsed.data?.status === 2;
+						yield { hex: audio, isFinal };
+						if (isFinal) return;
+					}
+				} catch {
+					// Not JSON — skip
+				}
+			}
+		}
+
+		// Flush remaining buffer
+		const remaining = buffer.trim();
+		if (remaining && remaining !== '[DONE]') {
+			const data = remaining.startsWith('data: ') ? remaining.slice(6) : remaining;
+			if (data !== '[DONE]') {
+				try {
+					const parsed = JSON.parse(data) as {
+						data?: { audio?: string };
+						audio?: string;
+					};
+					const audio = parsed.data?.audio ?? parsed.audio;
+					if (audio) {
+						yield { hex: audio, isFinal: true };
+					}
+				} catch {
+					// ignore
+				}
+			}
+		}
+	} finally {
+		reader.releaseLock();
+	}
+}
+
 // ─── Response → Handle Converter ────────────────────────────────────────────
 
 function toProviderHandle(response: MiniMaxMusicResponse): ProviderGenerationHandle {
@@ -207,21 +376,120 @@ export function createMiniMaxAdapter(apiKey: string): MusicProvider {
 
 	return {
 		async generateTextToMusic(input: TextToMusicInput): Promise<ProviderGenerationHandle> {
-			const payload = buildTextToMusicPayload(input);
-			const response = await callMiniMaxAPI(payload, apiKey);
-			return toProviderHandle(response);
+			try {
+				const payload = buildTextToMusicPayload(input);
+				const response = await callMiniMaxAPI(payload, apiKey);
+				return toProviderHandle(response);
+			} catch (error) {
+				throw normalizeMiniMaxError(error);
+			}
 		},
 
-		async generateInstrumental(input: InstrumentalGenerationInput): Promise<ProviderGenerationHandle> {
-			const payload = buildInstrumentalPayload(input);
-			const response = await callMiniMaxAPI(payload, apiKey);
-			return toProviderHandle(response);
+		async generateInstrumental(
+			input: InstrumentalGenerationInput
+		): Promise<ProviderGenerationHandle> {
+			try {
+				const payload = buildInstrumentalPayload(input);
+				const response = await callMiniMaxAPI(payload, apiKey);
+				return toProviderHandle(response);
+			} catch (error) {
+				throw normalizeMiniMaxError(error);
+			}
 		},
 
 		async generateCoverRestyle(input: CoverRestyleInput): Promise<ProviderGenerationHandle> {
-			const payload = buildCoverRestylePayload(input);
-			const response = await callMiniMaxAPI(payload, apiKey);
-			return toProviderHandle(response);
+			try {
+				const payload = buildCoverRestylePayload(input);
+				const response = await callMiniMaxAPI(payload, apiKey);
+				return toProviderHandle(response);
+			} catch (error) {
+				throw normalizeMiniMaxError(error);
+			}
+		},
+
+		async *streamGenerationAudio(
+			handle: ProviderGenerationHandle
+		): AsyncGenerator<ProviderAudioChunk, void, undefined> {
+			const metadata = handle.metadata as
+				| { audioUrl?: string; hasHexAudio?: boolean }
+				| undefined;
+
+			// Non-streaming URL fallback: fetch the URL and yield as a single chunk
+			if (!handle.supportsStreaming) {
+				const audioUrl = metadata?.audioUrl;
+				if (!audioUrl) {
+					throw new ProviderError(
+						'No streaming audio or download URL available',
+						'provider_validation_error'
+					);
+				}
+				try {
+					const response = await fetch(audioUrl);
+					if (!response.ok) {
+						throw new MiniMaxApiError(
+							`Failed to fetch audio: ${response.status} ${response.statusText}`,
+							response.status,
+							await response.text().catch(() => '')
+						);
+					}
+					const buffer = await response.arrayBuffer();
+					yield {
+						data: new Uint8Array(buffer),
+						sequence: 0,
+						isFinal: true
+					};
+					return;
+				} catch (error) {
+					throw normalizeMiniMaxError(error);
+				}
+			}
+
+			// Streaming mode: fetch streaming hex chunks from MiniMax
+			let response: Response;
+			try {
+				response = await fetch(
+					`${MINIMAX_MUSIC_ENDPOINT}?task_id=${encodeURIComponent(handle.providerJobId)}`,
+					{
+						method: 'GET',
+						headers: {
+							Authorization: `Bearer ${apiKey}`,
+							Accept: 'text/event-stream'
+						}
+					}
+				);
+
+				if (!response.ok) {
+					const errorBody = await response.text().catch(() => '');
+					throw new MiniMaxApiError(
+						`MiniMax streaming error: ${response.status} ${response.statusText}`,
+						response.status,
+						errorBody
+					);
+				}
+			} catch (error) {
+				throw normalizeMiniMaxError(error);
+			}
+
+			if (!response.body) {
+				throw new ProviderError(
+					'MiniMax streaming response has no body',
+					'provider_validation_error'
+				);
+			}
+
+			let sequence = 0;
+			try {
+				for await (const { hex, isFinal } of parseStreamLines(response.body)) {
+					yield {
+						data: decodeHexToBytes(hex),
+						sequence: sequence++,
+						isFinal
+					};
+				}
+			} catch (error) {
+				if (error instanceof ProviderError) throw error;
+				throw normalizeMiniMaxError(error);
+			}
 		}
 	};
 }
