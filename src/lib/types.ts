@@ -31,6 +31,18 @@ export interface JobStatusEvent {
 	errorCode: string | null;
 }
 
+/** Client-side representation of an audio asset for block cards */
+export interface BlockAsset {
+	id: string;
+	title: string;
+	prompt: string | null;
+	durationSec: number | null;
+	provider: string;
+	format: string | null;
+	status: AssetStatus;
+	createdAt: string;
+}
+
 /** SSE audio-chunk event payload for live-listening */
 export interface AudioChunkEvent {
 	jobId: string;

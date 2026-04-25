@@ -130,6 +130,9 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - `createArrangementEngineBridge()` must be called in Svelte component context for `$effect` lifecycle
 - lucide-svelte provides icon components: `import { Play, Pause, Square, Download } from 'lucide-svelte'`
 - TransportBar component at `src/lib/components/transport-bar.svelte` — accepts `engine: AudioEngine` prop
+- wavesurfer.js must be dynamically imported (`await import('wavesurfer.js')`) to avoid SSR issues — it needs DOM APIs
+- `BlockAsset` type in `src/lib/types.ts` — client-safe audio asset representation for block card props (id, title, prompt, durationSec, provider, format, status, createdAt)
+- BlockCard component at `src/lib/components/block-card.svelte` — accepts `asset: BlockAsset`, `audioUrl: string`, optional `onTitleChange` callback
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -1007,4 +1010,21 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - `createArrangementEngineBridge()` must be called within a Svelte component context for `$effect` lifecycle
   - lucide-svelte is installed and provides icon components (Play, Pause, Square, Download, etc.)
   - shadcn-svelte Button has `icon-sm` (size-8) and `icon-xs` (size-6) variants for icon-only buttons
+---
+
+## 2026-04-25 04:29 - US-042
+- Implemented ready block card component with waveform visualization, editable title, duration, prompt summary, and provider badge
+- Files changed:
+  - `package.json` (added wavesurfer.js dependency)
+  - `src/lib/types.ts` (added `BlockAsset` interface for client-side asset representation)
+  - `src/lib/components/block-card.svelte` (new — ready block card component)
+  - `prd.json` (marked US-042 as passing)
+- **Learnings for future iterations:**
+  - wavesurfer.js must be dynamically imported (`await import('wavesurfer.js')`) to avoid SSR issues — it needs DOM APIs
+  - wavesurfer.js `interact: false` makes waveform visualization-only (no seek on click)
+  - waveform colors use CSS custom properties via `hsl(var(--muted-foreground) / 0.4)` to match the theme
+  - `BlockAsset` type in `src/lib/types.ts` is the client-safe representation of audio_assets — use this for block card props
+  - Use `$effect` with cleanup return to manage wavesurfer lifecycle — destroy on URL/container changes and unmount
+  - `line-clamp-2` Tailwind utility truncates multi-line text with ellipsis (for prompt summary)
+  - Provider labels map at block-card component: `minimax` → 'MiniMax', etc.
 ---
