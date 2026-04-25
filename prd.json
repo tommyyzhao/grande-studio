@@ -376,7 +376,7 @@
         "Typecheck passes"
       ],
       "priority": 20,
-      "passes": false,
+      "passes": true,
       "notes": "Idempotency key prevents double-generation from repeated clicks."
     },
     {

@@ -8,5 +8,13 @@
 			"binding": "AUDIO_BUCKET",
 			"bucket_name": "grande-studio-audio"
 		}
-	]
+	],
+	"queues": {
+		"producers": [
+			{
+				"binding": "GENERATION_QUEUE",
+				"queue": "grande-studio-generation"
+			}
+		]
+	}
 }

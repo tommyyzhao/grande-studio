@@ -2,6 +2,12 @@
 // for information about these interfaces
 import type { R2BucketLike } from '$lib/services/r2-storage';
 
+/** Minimal Cloudflare Queue producer interface (avoids @cloudflare/workers-types dependency) */
+interface QueueLike {
+	send(message: unknown): Promise<void>;
+	sendBatch(messages: { body: unknown }[]): Promise<void>;
+}
+
 declare global {
 	namespace App {
 		// interface Error {}
@@ -27,6 +33,7 @@ declare global {
 		interface Platform {
 			env: {
 				AUDIO_BUCKET: R2BucketLike;
+				GENERATION_QUEUE: QueueLike;
 			};
 			context: {
 				waitUntil(promise: Promise<unknown>): void;

@@ -61,6 +61,10 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - Upload endpoint at `src/routes/api/upload/+server.ts`: POST with multipart form data (`file` + `projectId`), validates session/size/type, returns `{ assetId }`
 - Allowed upload MIME types map in upload endpoint: audio/mpeg, audio/mp3, audio/wav, audio/x-wav, audio/wave, audio/mp4, audio/x-m4a, audio/m4a, audio/aac, audio/flac, audio/x-flac
 - Max upload size: 50MB (`50 * 1024 * 1024`)
+- Generation endpoint at `src/routes/api/generate/+server.ts`: POST with JSON body (`projectId`, `prompt`, `mode`, `idempotencyKey` required; `lyrics`, `instrumental`, `lyricsOptimizer`, `structureTags`, `sourceAssetId` optional)
+- `QueueLike` interface at `src/app.d.ts` abstracts Cloudflare Queue producer API — `send(message)` and `sendBatch(messages)`
+- `GENERATION_QUEUE` binding in wrangler.jsonc is the Cloudflare Queue for generation jobs
+- Queue message shape: `{ jobId, assetId, projectId, ownerId, provider, jobType, idempotencyKey, quotaReservationId }`
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -438,4 +442,32 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - Asset title is derived from filename minus extension: `file.name.replace(/\.[^.]+$/, '')`
   - R2 bucket may be null in local dev (no Cloudflare Workers runtime) — endpoint logs warning but still creates asset row
   - SvelteKit `error()` helper throws HttpError — use for all validation failures with `{ message }` body
+---
+
+## 2026-04-24 - US-020
+- Created POST generation endpoint at `src/routes/api/generate/+server.ts`
+- Validates session (rejects unauthenticated with 401)
+- Validates JSON request body: projectId, prompt, mode, idempotencyKey required
+- Validates request through MiniMax validator (`validateMusicRequest`)
+- Checks daily quota via quota service; rejects with 429 and clear message if limit reached
+- Creates audio_asset row with status='created', source_type='generated', provider='minimax'
+- Creates generation_job row with status='created', idempotency_key, request_json payload
+- Creates quota_reservation via quota service (reserved status, 10-min TTL)
+- Enqueues job message to Cloudflare Queue (GENERATION_QUEUE binding)
+- Returns `{ jobId, assetId, warnings? }` with 201 status
+- If validation fails, no DB rows are created (validation happens before DB writes)
+- Added `QueueLike` interface to `app.d.ts` (minimal Cloudflare Queue producer abstraction)
+- Added `GENERATION_QUEUE` producer binding to `wrangler.jsonc`
+- Queue gracefully unavailable in local dev (logs warning, job created but not enqueued)
+- All 252 tests pass, typecheck passes (0 errors, 0 warnings)
+- Files changed: src/routes/api/generate/+server.ts (new), wrangler.jsonc, src/app.d.ts
+- **Learnings for future iterations:**
+  - Generation endpoint accepts JSON body (not multipart form data like upload endpoint)
+  - `idempotencyKey` is client-generated and required — prevents double-generation from repeated clicks
+  - Quota reservation is created outside the RLS transaction since the quota service has its own repository
+  - Queue message payload includes: jobId, assetId, projectId, ownerId, provider, jobType, idempotencyKey, quotaReservationId
+  - `QueueLike` interface at `app.d.ts` mirrors the R2BucketLike pattern — avoids `@cloudflare/workers-types` dependency
+  - `modeToJobType()` maps MusicRequestMode → JobType (they happen to be the same values but the types are distinct)
+  - Asset title is truncated from prompt (first 80 chars) for display purposes
+  - Validation warnings (e.g., unsupported structure tags) are returned in the response but don't block generation
 ---
