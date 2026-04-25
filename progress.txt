@@ -80,6 +80,11 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - `WorkflowErrorCode` at generation-workflow.ts: `ProviderErrorCode` | `stream_interrupted` | `audio_assembly_failed` | `r2_write_failed`
 - Track `currentJobStatus`/`currentAssetStatus` as mutable vars in workflow to pass correct source state to `failWorkflow`
 - Quota committed on workflow success, released on failure; if release fails, cron TTL (US-061) expires it
+- SSE endpoint at `src/routes/api/events/+server.ts`: GET handler, polls DB every 2s, emits `event: job-status` named events, heartbeat every 30s
+- SSE change detection: `gte(generationJobs.updatedAt, cutoff)` + `knownStatuses` Map for dedup — catches all transitions including terminal
+- Client-safe shared types at `src/lib/types.ts`: `AssetStatus`, `JobStatus`, `JobStatusEvent` — importable from client code (mirrors server-side schema enums)
+- SSE consumer store at `src/lib/stores/sse.svelte.ts`: `sseStore` singleton with `connect()`, `disconnect()`, reactive `jobs` Map, `setJobStatus()` for optimistic updates
+- Svelte 5 reactive Map pattern: `jobs = new Map(jobs)` to trigger reactivity — in-place mutation of $state Maps does not trigger updates
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -561,4 +566,53 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - Track `currentJobStatus`/`currentAssetStatus` as mutable variables throughout the workflow to ensure `failWorkflow` always has the correct transition source state
   - `error_json` shape: `{ code: string, message: string, failedAt: string }` — stored on both `generation_jobs.error_json` and `audio_assets.error_json`
   - `error_code` is a denormalized text field on `generation_jobs` only — enables fast filtering/querying by error type
+---
+
+## 2026-04-25 - US-024
+- Created SSE endpoint at `src/routes/api/events/+server.ts` (GET handler)
+- Validates session (rejects unauthenticated with 401); temp session support deferred to US-062
+- Polls `generation_jobs` every 2 seconds via RLS-protected query using `gte(updatedAt, cutoff)` for change detection
+- `knownStatuses` Map deduplicates events — only emits when job status actually changes
+- Event format: named `event: job-status` with JSON data `{ jobId, assetId, status, errorCode }`
+- SSE comment `: connected` and `retry: 3000` sent on connection open
+- Heartbeat (`: heartbeat`) every 30 seconds to keep connection alive
+- Cleanup on client disconnect via both `ReadableStream.cancel()` and `request.signal` abort listener
+- All timers (`pollTimer`, `heartbeatTimer`) cleared on cleanup — no resource leaks
+- Transient DB errors logged but don't close the connection
+- Initial 1-minute lookback captures recently-active jobs on connect
+- All 252 tests pass, typecheck passes (0 errors, 0 warnings)
+- Files changed: src/routes/api/events/+server.ts (new)
+- **Learnings for future iterations:**
+  - SSE endpoint at `/api/events` uses GET handler returning `new Response(ReadableStream, { headers: 'text/event-stream' })`
+  - Change detection via `gte(generationJobs.updatedAt, cutoff)` catches all status transitions including terminal ones
+  - `knownStatuses` Map prevents duplicate events even with overlapping poll windows (gte is inclusive)
+  - Named SSE events (`event: job-status`) allow client to use `addEventListener('job-status', ...)` instead of generic `onmessage`
+  - `retry: 3000` SSE field tells the browser to auto-reconnect after 3 seconds on connection drop
+  - `request.signal.addEventListener('abort', cleanup)` handles client disconnect in Cloudflare Workers environment
+  - Heartbeat SSE comments (`: heartbeat`) are invisible to EventSource API but keep the TCP connection alive
+---
+
+## 2026-04-25 - US-025
+- Created client-side SSE consumer store at `src/lib/stores/sse.svelte.ts`
+- Created shared client-safe types at `src/lib/types.ts` (AssetStatus, JobStatus, JobStatusEvent)
+- `createSSEStore()` factory returns reactive store with `connect()`, `disconnect()`, `getJobStatus()`, `getAssetStatus()`, `setJobStatus()`, `onStatusChange()`
+- Connects to `/api/events` SSE endpoint using `EventSource` API
+- Listens for named `job-status` events (matching server-side `event: job-status` format)
+- Reactive `jobs` Map (`$state<Map<string, JobState>>`) triggers component re-renders on status changes
+- Automatic reconnection with exponential backoff: 1s initial, 2x multiplier, 30s max cap
+- Backoff resets on successful connection
+- `disconnect()` cleans up EventSource, timers, and prevents reconnection
+- `setJobStatus()` enables optimistic UI updates (e.g., show 'queued' immediately after generate POST)
+- `onStatusChange()` listener pattern for imperative reactions (e.g., triggering audio buffer load on 'ready')
+- Singleton `sseStore` exported for app-wide use
+- All 252 tests pass, typecheck passes (0 errors, 0 warnings)
+- Files changed: src/lib/stores/sse.svelte.ts (new), src/lib/types.ts (new), prd.json, progress.txt
+- **Learnings for future iterations:**
+  - SSE consumer uses `EventSource` API with `addEventListener('job-status', handler)` for named events (not `onmessage`)
+  - Svelte 5 reactive Map: must create a new `Map(existing)` and reassign to `$state` variable to trigger reactivity (mutating the same Map instance doesn't trigger updates)
+  - Client-safe types at `src/lib/types.ts` mirror server-side schema enums — avoids importing from `$lib/server/` in client code
+  - `createSSEStore()` factory returns an object with getters for reactive properties (`get jobs()`, `get connected()`) — Svelte 5 runes work with property access
+  - `setJobStatus()` is critical for optimistic updates: call after generate endpoint returns to show queued state immediately, before SSE poll catches up
+  - Exponential backoff: `retryMs = Math.min(retryMs * 2, MAX_RETRY_MS)` — simple and effective
+  - `intentionalClose` flag distinguishes user-initiated disconnect from error-triggered reconnection
 ---
