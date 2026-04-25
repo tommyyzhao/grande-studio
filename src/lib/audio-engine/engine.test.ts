@@ -15,13 +15,43 @@ function createMockAudioBuffer(duration = 5.0, sampleRate = 44100): AudioBuffer 
 	} as unknown as AudioBuffer;
 }
 
+interface MockSourceNode {
+	buffer: AudioBuffer | null;
+	connect: ReturnType<typeof vi.fn>;
+	disconnect: ReturnType<typeof vi.fn>;
+	start: ReturnType<typeof vi.fn>;
+	stop: ReturnType<typeof vi.fn>;
+	onended: (() => void) | null;
+	_triggerEnded(): void;
+}
+
+function createMockSourceNode(): MockSourceNode {
+	const node: MockSourceNode = {
+		buffer: null,
+		connect: vi.fn(() => node),
+		disconnect: vi.fn(),
+		start: vi.fn(),
+		stop: vi.fn(),
+		onended: null,
+		_triggerEnded() {
+			if (node.onended) node.onended();
+		}
+	};
+	return node;
+}
+
 function createMockAudioContext() {
 	let _state: AudioContextState = 'running';
+	let _currentTime = 0;
 	const mockBuffer = createMockAudioBuffer();
+	const sourceNodes: MockSourceNode[] = [];
 
 	const ctx = {
 		get state() {
 			return _state;
+		},
+		get currentTime() {
+			return _currentTime;
 		},
 		close: vi.fn(async () => {
 			_state = 'closed';
@@ -33,13 +63,25 @@ function createMockAudioContext() {
 			_state = 'suspended';
 		}),
 		decodeAudioData: vi.fn(async () => mockBuffer),
+		createBufferSource: vi.fn(() => {
+			const node = createMockSourceNode();
+			sourceNodes.push(node);
+			return node as unknown as AudioBufferSourceNode;
+		}),
 		destination: {},
-		currentTime: 0,
 		sampleRate: 44100,
-		_mockBuffer: mockBuffer
+		_mockBuffer: mockBuffer,
+		_sourceNodes: sourceNodes,
+		_setCurrentTime(t: number) {
+			_currentTime = t;
+		}
 	};
 
-	return ctx as unknown as AudioContext & { _mockBuffer: AudioBuffer };
+	return ctx as unknown as AudioContext & {
+		_mockBuffer: AudioBuffer;
+		_sourceNodes: MockSourceNode[];
+		_setCurrentTime: (t: number) => void;
+	};
 }
 
 function createMockContextFactory() {
@@ -254,6 +296,287 @@ describe('AudioEngine', () => {
 			const ctx = engine.getContext();
 			expect(ctx).toBeDefined();
 			expect(factory.create).toHaveBeenCalledTimes(2);
+		});
+
+		it('stops playback before disposing', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			await engine.play('a1');
+			expect(engine.isPlaying).toBe(true);
+			await engine.dispose();
+			expect(engine.isPlaying).toBe(false);
+		});
+	});
+
+	describe('play()', () => {
+		it('starts playback of a loaded asset', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			await engine.play('a1');
+			expect(engine.isPlaying).toBe(true);
+		});
+
+		it('creates an AudioBufferSourceNode connected to destination', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			await engine.play('a1');
+			const nodes = mockContext._sourceNodes;
+			expect(nodes.length).toBe(1);
+			expect(nodes[0].buffer).toBe(mockContext._mockBuffer);
+			expect(nodes[0].connect).toHaveBeenCalledWith(mockContext.destination);
+			expect(nodes[0].start).toHaveBeenCalledWith(0, 0);
+		});
+
+		it('throws if no asset specified and no prior asset', async () => {
+			await expect(engine.play()).rejects.toThrow('No asset specified for playback');
+		});
+
+		it('throws if asset not loaded', async () => {
+			await expect(engine.play('nonexistent')).rejects.toThrow('Asset not loaded: nonexistent');
+		});
+
+		it('resumes suspended AudioContext', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			await engine.suspend();
+			expect(mockContext.state).toBe('suspended');
+			await engine.play('a1');
+			expect(mockContext.resume).toHaveBeenCalled();
+			expect(engine.isPlaying).toBe(true);
+		});
+
+		it('resumes same asset after pause when no assetId given', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			await engine.play('a1');
+			await engine.pause();
+			await engine.play(); // no assetId — should resume a1
+			expect(engine.isPlaying).toBe(true);
+		});
+
+		it('stops current playback when switching assets', async () => {
+			await engine.loadAsset('a1', 'https://example.com/one.mp3');
+			await engine.loadAsset('a2', 'https://example.com/two.mp3');
+			await engine.play('a1');
+			const firstNode = mockContext._sourceNodes[0];
+			await engine.play('a2');
+			expect(firstNode.stop).toHaveBeenCalled();
+			expect(firstNode.disconnect).toHaveBeenCalled();
+			expect(mockContext._sourceNodes.length).toBe(2);
+		});
+
+		it('resets offset when switching to a different asset', async () => {
+			await engine.loadAsset('a1', 'https://example.com/one.mp3');
+			await engine.loadAsset('a2', 'https://example.com/two.mp3');
+			await engine.play('a1');
+			engine.seek(3.0);
+			await engine.play('a2');
+			expect(engine.currentTime).toBe(0);
+		});
+	});
+
+	describe('pause()', () => {
+		it('preserves playback position', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			mockContext._setCurrentTime(0);
+			await engine.play('a1');
+			// Simulate 2 seconds of playback
+			mockContext._setCurrentTime(2);
+			await engine.pause();
+			expect(engine.currentTime).toBeCloseTo(2, 1);
+			expect(engine.isPlaying).toBe(false);
+		});
+
+		it('suspends AudioContext', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			await engine.play('a1');
+			await engine.pause();
+			expect(mockContext.suspend).toHaveBeenCalled();
+		});
+
+		it('stops the source node', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			await engine.play('a1');
+			const node = mockContext._sourceNodes[0];
+			await engine.pause();
+			expect(node.stop).toHaveBeenCalled();
+			expect(node.disconnect).toHaveBeenCalled();
+		});
+
+		it('is a no-op when not playing', async () => {
+			await engine.pause(); // should not throw
+			expect(engine.isPlaying).toBe(false);
+		});
+
+		it('allows resuming from paused position', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			mockContext._setCurrentTime(0);
+			await engine.play('a1');
+			mockContext._setCurrentTime(2);
+			await engine.pause();
+			const pausedTime = engine.currentTime;
+
+			// Resume — context.resume is called by play()
+			mockContext._setCurrentTime(5); // time advanced while paused
+			await engine.play();
+			// The new source should start from the paused offset
+			const lastNode = mockContext._sourceNodes[mockContext._sourceNodes.length - 1];
+			expect(lastNode.start).toHaveBeenCalledWith(0, pausedTime);
+		});
+	});
+
+	describe('stop()', () => {
+		it('stops playback and resets position to 0', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			await engine.play('a1');
+			mockContext._setCurrentTime(3);
+			engine.stop();
+			expect(engine.isPlaying).toBe(false);
+			expect(engine.currentTime).toBe(0);
+		});
+
+		it('stops the source node', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			await engine.play('a1');
+			const node = mockContext._sourceNodes[0];
+			engine.stop();
+			expect(node.stop).toHaveBeenCalled();
+			expect(node.disconnect).toHaveBeenCalled();
+		});
+
+		it('is a no-op when not playing', () => {
+			engine.stop(); // should not throw
+			expect(engine.currentTime).toBe(0);
+		});
+	});
+
+	describe('seek()', () => {
+		it('sets playback position while paused', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			await engine.play('a1');
+			await engine.pause();
+			engine.seek(2.5);
+			expect(engine.currentTime).toBeCloseTo(2.5, 1);
+		});
+
+		it('restarts playback from new position while playing', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			mockContext._setCurrentTime(0);
+			await engine.play('a1');
+			const firstNode = mockContext._sourceNodes[0];
+
+			engine.seek(3.0);
+			// First source should be stopped
+			expect(firstNode.stop).toHaveBeenCalled();
+			// New source should start at the seek position
+			const secondNode = mockContext._sourceNodes[1];
+			expect(secondNode.start).toHaveBeenCalledWith(0, 3.0);
+			expect(engine.isPlaying).toBe(true);
+		});
+
+		it('clamps negative values to 0', () => {
+			engine.seek(-5);
+			expect(engine.currentTime).toBe(0);
+		});
+
+		it('clamps to buffer duration while playing', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			await engine.play('a1');
+			engine.seek(100); // buffer duration is 5.0
+			expect(engine.currentTime).toBeCloseTo(5.0, 1);
+		});
+
+		it('allows seeking before play sets the start position', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			engine.seek(1.5);
+			await engine.play('a1');
+			const node = mockContext._sourceNodes[0];
+			expect(node.start).toHaveBeenCalledWith(0, 1.5);
+		});
+	});
+
+	describe('currentTime', () => {
+		it('is 0 initially', () => {
+			expect(engine.currentTime).toBe(0);
+		});
+
+		it('reflects elapsed time during playback', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			mockContext._setCurrentTime(10);
+			await engine.play('a1');
+			// playbackStartedAt = 10, playbackOffset = 0
+			mockContext._setCurrentTime(12.5);
+			expect(engine.currentTime).toBeCloseTo(2.5, 1);
+		});
+
+		it('freezes when paused', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			mockContext._setCurrentTime(0);
+			await engine.play('a1');
+			mockContext._setCurrentTime(3);
+			await engine.pause();
+			const pausedTime = engine.currentTime;
+			mockContext._setCurrentTime(100); // time passes while paused
+			expect(engine.currentTime).toBe(pausedTime);
+		});
+
+		it('resets to 0 after stop', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			await engine.play('a1');
+			mockContext._setCurrentTime(3);
+			engine.stop();
+			expect(engine.currentTime).toBe(0);
+		});
+	});
+
+	describe('isPlaying', () => {
+		it('is false initially', () => {
+			expect(engine.isPlaying).toBe(false);
+		});
+
+		it('is true during playback', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			await engine.play('a1');
+			expect(engine.isPlaying).toBe(true);
+		});
+
+		it('is false after pause', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			await engine.play('a1');
+			await engine.pause();
+			expect(engine.isPlaying).toBe(false);
+		});
+
+		it('is false after stop', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			await engine.play('a1');
+			engine.stop();
+			expect(engine.isPlaying).toBe(false);
+		});
+
+		it('becomes false when playback ends naturally', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			await engine.play('a1');
+			expect(engine.isPlaying).toBe(true);
+			// Simulate the source node's onended firing
+			const node = mockContext._sourceNodes[0];
+			node._triggerEnded();
+			expect(engine.isPlaying).toBe(false);
+			expect(engine.currentTime).toBe(0);
+		});
+	});
+
+	describe('unloadAsset with playback', () => {
+		it('stops playback if active asset is unloaded', async () => {
+			await engine.loadAsset('a1', 'https://example.com/audio.mp3');
+			await engine.play('a1');
+			expect(engine.isPlaying).toBe(true);
+			engine.unloadAsset('a1');
+			expect(engine.isPlaying).toBe(false);
+			expect(engine.currentTime).toBe(0);
+		});
+
+		it('does not stop playback if a different asset is unloaded', async () => {
+			await engine.loadAsset('a1', 'https://example.com/one.mp3');
+			await engine.loadAsset('a2', 'https://example.com/two.mp3');
+			await engine.play('a1');
+			engine.unloadAsset('a2');
+			expect(engine.isPlaying).toBe(true);
 		});
 	});
 });
