@@ -13,6 +13,8 @@
 		onCreateVariation?: (asset: BlockAsset) => void;
 		onCoverRestyle?: (asset: BlockAsset) => void;
 		onExport?: (asset: BlockAsset) => void;
+		/** Map of parentAssetId → number of child variations */
+		variationCounts?: Map<string, number>;
 	}
 
 	let {
@@ -21,7 +23,8 @@
 		onAddToArrangement,
 		onCoverRestyle,
 		onCreateVariation,
-		onExport
+		onExport,
+		variationCounts
 	}: Props = $props();
 
 	// ─── Local asset list state ─────────────────────────────────────────
@@ -140,6 +143,7 @@
 					{onCreateVariation}
 					{onCoverRestyle}
 					{onExport}
+					variationCount={variationCounts?.get(asset.id) ?? 0}
 				/>
 			{:else}
 				<PendingBlockCard

@@ -70,10 +70,38 @@
 		sseStore.disconnect();
 	});
 
-	// ─── Block list ref ──────────────────────────────────────────────────
+	// ─── Block list & generate panel refs ────────────────────────────────
 	let blockList = $state<ReturnType<typeof BlockList> | null>(null);
+	let generatePanel = $state<ReturnType<typeof GeneratePanel> | null>(null);
 
-	function handleGenerated(result: { jobId: string; assetId: string; prompt: string; lyrics: string | null }) {
+	// ─── Variation counts (parentAssetId → number of children) ──────────
+	let variationCounts = $state<Map<string, number>>(new Map());
+
+	// Load variation counts on project load
+	$effect(() => {
+		if (!data.project?.id) return;
+		fetchVariationCounts(data.project.id);
+	});
+
+	async function fetchVariationCounts(projectId: string) {
+		try {
+			const res = await fetch(`/api/take-edges?projectId=${encodeURIComponent(projectId)}`);
+			if (res.ok) {
+				const { counts } = await res.json();
+				variationCounts = new Map(Object.entries(counts as Record<string, number>));
+			}
+		} catch {
+			// Non-critical — counts will just show 0
+		}
+	}
+
+	function handleGenerated(result: {
+		jobId: string;
+		assetId: string;
+		prompt: string;
+		lyrics: string | null;
+		parentAssetId: string | null;
+	}) {
 		const newBlock: BlockAsset = {
 			id: result.assetId,
 			title: result.prompt.slice(0, 50) || 'Untitled',
@@ -92,6 +120,41 @@
 		// Track metadata for arrangement clip cards
 		assetTitles = new Map(assetTitles).set(result.assetId, newBlock.title);
 		assetDurations = new Map(assetDurations).set(result.assetId, newBlock.durationSec);
+
+		// Create take edge if this was a variation
+		if (result.parentAssetId && data.project?.id) {
+			createTakeEdge(data.project.id, result.parentAssetId, result.assetId, result.prompt);
+		}
+	}
+
+	async function createTakeEdge(projectId: string, parentAssetId: string, childAssetId: string, branchPrompt: string) {
+		try {
+			const res = await fetch('/api/take-edges', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					projectId,
+					parentAssetId,
+					childAssetId,
+					branchType: 'prompt_variation',
+					branchPrompt
+				})
+			});
+
+			if (res.ok) {
+				// Update variation count for parent
+				const current = variationCounts.get(parentAssetId) ?? 0;
+				variationCounts = new Map(variationCounts).set(parentAssetId, current + 1);
+			}
+		} catch {
+			// Non-critical — edge just won't be tracked
+			console.error('Failed to create take edge');
+		}
+	}
+
+	// ─── Create variation handler ───────────────────────────────────────
+	function handleCreateVariation(asset: BlockAsset) {
+		generatePanel?.prefill(asset.prompt, asset.lyrics, asset.id);
 	}
 
 	// ─── Add to arrangement ─────────────────────────────────────────────
@@ -289,7 +352,7 @@
 	<main class="flex min-h-0 flex-1 flex-col">
 		<!-- Generate Panel Area -->
 		<section class="border-border border-b px-4 py-4">
-			<GeneratePanel projectId={data.project?.id ?? null} onGenerated={handleGenerated} />
+			<GeneratePanel bind:this={generatePanel} projectId={data.project?.id ?? null} onGenerated={handleGenerated} />
 		</section>
 
 		<!-- Scrollable content area: asset list + arrangement -->
@@ -301,6 +364,8 @@
 					initialAssets={data.assets}
 					engine={audioEngine}
 					onAddToArrangement={handleAddToArrangement}
+					onCreateVariation={handleCreateVariation}
+					{variationCounts}
 				/>
 			</section>
 

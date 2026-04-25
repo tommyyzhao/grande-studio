@@ -24,6 +24,8 @@
 		onCreateVariation?: (asset: BlockAsset) => void;
 		onCoverRestyle?: (asset: BlockAsset) => void;
 		onExport?: (asset: BlockAsset) => void;
+		/** Number of child variations derived from this block */
+		variationCount?: number;
 	}
 
 	let {
@@ -34,7 +36,8 @@
 		onAddToArrangement,
 		onCoverRestyle,
 		onCreateVariation,
-		onExport
+		onExport,
+		variationCount = 0
 	}: Props = $props();
 
 	// ─── Waveform ────────────────────────────────────────────────────────
@@ -262,11 +265,18 @@
 				</button>
 			{/if}
 		</div>
-		<span
-			class="bg-muted text-muted-foreground shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
-		>
-			{providerLabel}
-		</span>
+		<div class="flex shrink-0 items-center gap-1.5">
+			{#if variationCount > 0}
+				<span class="rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-700 dark:text-blue-400">
+					{variationCount} {variationCount === 1 ? 'variation' : 'variations'}
+				</span>
+			{/if}
+			<span
+				class="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-[10px] font-medium"
+			>
+				{providerLabel}
+			</span>
+		</div>
 	</div>
 
 	<!-- Info row: duration + prompt summary -->

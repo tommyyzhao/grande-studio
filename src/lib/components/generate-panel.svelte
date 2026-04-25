@@ -10,10 +10,37 @@
 
 	interface Props {
 		projectId: string | null;
-		onGenerated?: (result: { jobId: string; assetId: string; prompt: string; lyrics: string | null }) => void;
+		onGenerated?: (result: {
+			jobId: string;
+			assetId: string;
+			prompt: string;
+			lyrics: string | null;
+			parentAssetId: string | null;
+		}) => void;
 	}
 
 	let { projectId, onGenerated }: Props = $props();
+
+	// ─── Variation mode (prefilled from parent asset) ────────────────────
+	let parentAssetId = $state<string | null>(null);
+	let variationBannerVisible = $derived(parentAssetId !== null);
+
+	/**
+	 * Prefill the generate panel with prompt/lyrics from a parent asset.
+	 * Called externally when the user clicks "Create variation" on a block.
+	 */
+	export function prefill(prefillPrompt: string | null, prefillLyrics: string | null, parentId: string) {
+		panelMode = 'generate';
+		prompt = prefillPrompt ?? '';
+		lyrics = prefillLyrics ?? '';
+		instrumental = false;
+		parentAssetId = parentId;
+		errorMessage = '';
+	}
+
+	function clearVariationMode() {
+		parentAssetId = null;
+	}
 
 	// ─── Panel mode ──────────────────────────────────────────────────────
 	type PanelMode = 'generate' | 'cover_restyle';
@@ -277,16 +304,19 @@
 			// Notify parent so block list can add a queued block immediately
 			const submittedPrompt = prompt.trim();
 			const submittedLyrics = lyrics.trim() || null;
+			const submittedParentAssetId = parentAssetId;
 			onGenerated?.({
 				jobId: data.jobId,
 				assetId: data.assetId,
 				prompt: submittedPrompt,
-				lyrics: submittedLyrics
+				lyrics: submittedLyrics,
+				parentAssetId: submittedParentAssetId
 			});
 
 			prompt = '';
 			lyrics = '';
 			instrumental = false;
+			parentAssetId = null;
 			if (panelMode === 'cover_restyle') {
 				clearUploadedFile();
 			}
@@ -299,6 +329,20 @@
 </script>
 
 <form onsubmit={handleSubmit} class="flex flex-col gap-3">
+	<!-- ═══ Variation Banner ═══ -->
+	{#if variationBannerVisible}
+		<div class="flex items-center justify-between rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2">
+			<span class="text-sm text-blue-700 dark:text-blue-400">Creating variation from parent block</span>
+			<button
+				type="button"
+				class="text-xs text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200"
+				onclick={clearVariationMode}
+			>
+				Cancel
+			</button>
+		</div>
+	{/if}
+
 	<!-- ═══ Mode Toggle ═══ -->
 	<div class="flex gap-1 rounded-lg border p-0.5">
 		<button
