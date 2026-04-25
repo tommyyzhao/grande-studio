@@ -3,6 +3,9 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 ---
 
 ## Codebase Patterns
+- Rough mixdown renderer at `src/lib/audio-engine/mixdown.ts`: `renderMixdown(snapshot, onProgress?)` — uses OfflineAudioContext to render all audible clips, returns WAV Blob; `downloadBlob(blob, filename)` triggers browser download
+- WAV encoder at `src/lib/audio-engine/wav-encoder.ts`: `encodeWav(buffer, sampleRate?)` — PCM 16-bit LE, RIFF header, interleaved channels
+- TransportBar requires `projectId: string | null` prop — used for snapshot building during export
 - Download endpoint at `src/routes/api/download/[assetId]/+server.ts`: GET fetches R2 bytes directly via `bucket.get()`, serves with `Content-Disposition: attachment; filename="{sanitized_title}.{ext}"` — no redirect to signed URL
 - Take edges API at `src/routes/api/take-edges/+server.ts`: POST creates edges, GET returns `{ counts, edges }` — `counts` is Record<parentAssetId, number>, `edges` is array of `{ parentAssetId, childAssetId, branchType }`
 - `parentEdges` Map<childAssetId, parentAssetId> in workspace page — built from GET /api/take-edges edge data, passed through BlockList to BlockCard for "Derived from" badges
@@ -1321,4 +1324,22 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - `SnapshotValidationError` includes `clipId | null` and `field` for precise error reporting
   - Snapshot builder does NOT filter muted/soloed clips — renderer is responsible for applying mute/solo logic
   - Deduplicate signed URL resolution via `Set` of unique assetIds before async calls
+---
+
+## 2026-04-25 - US-059
+- Implemented rough mixdown: OfflineAudioContext render and WAV download
+- Files created:
+  - `src/lib/audio-engine/wav-encoder.ts` — WAV encoder (PCM 16-bit, interleaved channels, RIFF header)
+  - `src/lib/audio-engine/mixdown.ts` — rough mixdown renderer using OfflineAudioContext
+- Files modified:
+  - `src/lib/components/transport-bar.svelte` — wired Export button with progress states (loading/rendering/encoding), error display, and `projectId` prop
+  - `src/routes/+page.svelte` — passes `projectId` to TransportBar
+- **Learnings for future iterations:**
+  - WAV encoding: float32 → int16 PCM via `sample * 0x7FFF` (positive) / `sample * 0x8000` (negative), clamped to [-1, 1]
+  - OfflineAudioContext renders synchronously to an AudioBuffer — schedule all clips with GainNodes before calling `startRendering()`
+  - Mute/solo filtering applied in the renderer (not snapshot builder) — snapshot includes all clips, renderer calls `getAudibleClips()`
+  - Signed URL resolution for mixdown: `fetch('/api/audio/{assetId}', { redirect: 'follow' }).then(res => res.url)` follows the 302 redirect to get the direct R2 URL
+  - Svelte 5 `$derived` cannot reference `$state` variables declared later in the same `<script>` — order declarations carefully
+  - TransportBar now accepts `projectId: string | null` prop for snapshot building
+  - `downloadBlob()` utility creates/revokes object URL for clean browser downloads
 ---

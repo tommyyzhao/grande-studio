@@ -1090,7 +1090,7 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 59,
-      "passes": false,
+      "passes": true,
       "notes": "Server-side rendering is post-V1. Optional: upload rendered file to R2 as rendered_export asset (stretch goal)."
     },
     {
