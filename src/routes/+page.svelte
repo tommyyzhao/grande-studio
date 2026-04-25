@@ -174,6 +174,16 @@
 		generatePanel?.prefillCover(asset.id, asset.title, asset.prompt, asset.lyrics);
 	}
 
+	// ─── Export / Download handler ─────────────────────────────────────
+	function handleExport(asset: BlockAsset) {
+		const link = document.createElement('a');
+		link.href = `/api/download/${asset.id}`;
+		link.download = '';
+		document.body.appendChild(link);
+		link.click();
+		document.body.removeChild(link);
+	}
+
 	// ─── Add to arrangement ─────────────────────────────────────────────
 	let addingToArrangement = $state(false);
 
@@ -383,6 +393,7 @@
 					onAddToArrangement={handleAddToArrangement}
 					onCreateVariation={handleCreateVariation}
 					onCoverRestyle={handleCoverRestyle}
+					onExport={handleExport}
 					{variationCounts}
 					{parentEdges}
 				/>
