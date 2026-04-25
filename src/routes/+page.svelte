@@ -32,17 +32,22 @@
 		}
 	});
 
-	// ─── Asset title lookup (for arrangement clip cards) ─────────────────
+	// ─── Asset metadata lookup (for arrangement clip cards) ─────────────
 	/** Map from assetId → title, populated from initial assets and new blocks */
 	let assetTitles = $state<Map<string, string>>(new Map());
+	/** Map from assetId → durationSec, populated from initial assets and new blocks */
+	let assetDurations = $state<Map<string, number | null>>(new Map());
 
 	// Seed from initial assets
 	$effect(() => {
-		const map = new Map<string, string>();
+		const titleMap = new Map<string, string>();
+		const durMap = new Map<string, number | null>();
 		for (const asset of data.assets) {
-			map.set(asset.id, asset.title);
+			titleMap.set(asset.id, asset.title);
+			durMap.set(asset.id, asset.durationSec);
 		}
-		assetTitles = map;
+		assetTitles = titleMap;
+		assetDurations = durMap;
 	});
 
 	// ─── Load audio buffers for hydrated arrangement clips ──────────────
@@ -84,8 +89,9 @@
 		};
 		blockList?.addBlock(newBlock);
 
-		// Track the title for arrangement clip cards
+		// Track metadata for arrangement clip cards
 		assetTitles = new Map(assetTitles).set(result.assetId, newBlock.title);
+		assetDurations = new Map(assetDurations).set(result.assetId, newBlock.durationSec);
 	}
 
 	// ─── Add to arrangement ─────────────────────────────────────────────
@@ -127,8 +133,9 @@
 			// Add to arrangement store (engine bridge will sync automatically)
 			arrangementStore.addClip(clipState);
 
-			// Track asset title
+			// Track asset metadata
 			assetTitles = new Map(assetTitles).set(asset.id, asset.title);
+			assetDurations = new Map(assetDurations).set(asset.id, asset.durationSec);
 
 			// Load audio buffer in engine if not already loaded
 			if (!audioEngine.hasAsset(asset.id)) {
@@ -283,6 +290,7 @@
 							<ArrangementClipCard
 								{clip}
 								title={assetTitles.get(clip.assetId) ?? 'Untitled'}
+								assetDurationSec={assetDurations.get(clip.assetId) ?? null}
 								onUpdateClip={handleUpdateClip}
 							/>
 						{/each}
