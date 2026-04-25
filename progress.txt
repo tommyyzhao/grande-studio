@@ -115,6 +115,8 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - `ArrangementClipState` exported from engine.ts: clipId, assetId, startTimeSec, trimStartSec, trimEndSec, clipDurationSec, gainDb, muted, soloed, layerOrder
 - `arrangementDuration` getter: max(startTimeSec + effectiveDuration) across all clips — uses clipDurationSec when set, buffer duration as fallback
 - Transport auto-stop in arrangement mode: `setTimeout(remaining * 1000)` sets playing=false and resets offset at arrangement end; timer cleared on pause/stop/dispose
+- Arrangement-engine bridge at `src/lib/stores/arrangement-engine-bridge.svelte.ts`: `createArrangementEngineBridge(engine, store)` — call from component context for proper `$effect` lifecycle
+- Bridge diff strategy: structural changes (add/remove) → `setArrangement`; property changes → individual setters (`setClipGain`, `setClipMute`, etc.)
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -813,4 +815,48 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - `arrangementDuration` works without loaded buffers when `clipDurationSec` is set (as it always is via `setArrangement`)
   - Tests for auto-stop use `vi.useFakeTimers()` / `vi.advanceTimersByTime()` to control setTimeout in vitest
   - `ArrangementClipState.layerOrder` is stored but not used by the engine — it's for UI display ordering only
+---
+
+## 2026-04-25 - US-033
+- Created arrangement store at `src/lib/stores/arrangement.svelte.ts` using Svelte 5 runes
+- `createArrangementStore()` factory returns reactive store with:
+  - `clips` ($state): array of `ArrangementClipState` objects
+  - `totalDuration` ($derived): max(startTimeSec + clipDurationSec) across all clips
+  - `activeClips` ($derived): solo-aware, mute-aware filtered clips (same logic as audio engine)
+  - `clipCount` ($derived): simple count of clips
+- Methods: `addClip`, `removeClip`, `updateClip(ClipUpdate)`, `reorderClips(orderedIds)`, `setClips` (bulk hydration), `getClip`
+- `ClipUpdate` type: partial update with required `clipId` — spreads changes onto existing clip
+- `reorderClips` accepts ordered IDs, sorts clips to match, and updates `layerOrder` to match array position
+- Singleton `arrangementStore` exported for app-wide use
+- Imports `ArrangementClipState` from audio engine (reuses existing interface)
+- All 395 tests pass, typecheck passes (0 errors)
+- Files changed: src/lib/stores/arrangement.svelte.ts (new)
+- **Learnings for future iterations:**
+  - Svelte 5 $state arrays: reassign with spread (`clips = [...clips, item]`) to trigger reactivity — same principle as Maps
+  - `$derived.by(() => ...)` for computed values with loops/logic; `$derived(expr)` for simple expressions
+  - `ClipUpdate` type uses `Partial<Omit<T, 'clipId'>> & { clipId: string }` — ensures clipId is always provided while all other fields are optional
+  - `arrangementStore` is the single source of truth — audio engine and UI components consume it
+  - Store follows same factory + singleton pattern as `sseStore` in sse.svelte.ts
+---
+
+## 2026-04-25 - US-034
+- Created reactive bridge at `src/lib/stores/arrangement-engine-bridge.svelte.ts`
+- `createArrangementEngineBridge(engine, store)` sets up Svelte 5 `$effect` to sync store→engine
+- Diff-based change detection: tracks previous clips and compares to current on each reactive update
+- Structural changes (add/remove clips): calls `engine.setArrangement(clips)` for full reconfiguration
+- Property-only changes on existing clips: calls individual engine setters (no playback disruption):
+  - `setClipGain`, `setClipMute`, `setClipSolo` for mix changes
+  - `setClipStartOffset`, `setClipTrim`, `setClipLoop` for scheduling changes
+  - `setClipAssetId` for asset reassignment
+- `layerOrder` changes are UI-only and do not trigger engine updates
+- Engine updates do not cause audible glitches when not playing (setArrangement only sets internal state when not playing)
+- `ArrangementStoreReadable` interface decouples the bridge from the concrete store implementation
+- All 395 tests pass, typecheck passes (0 errors, 0 warnings)
+- Files changed: src/lib/stores/arrangement-engine-bridge.svelte.ts (new)
+- **Learnings for future iterations:**
+  - `$effect` in `.svelte.ts` files works when the containing function is called from component context — proper lifecycle cleanup on unmount
+  - Bridge pattern: diff previous vs. current state to minimize engine calls — structural changes use bulk `setArrangement`, property changes use individual setters
+  - Shallow copy clips (`{ ...c }`) before storing as `previousClips` to break reactive references and enable value comparison
+  - `setArrangement` is destructive (stops source nodes, clears clip state) — only call for structural changes, not property updates
+  - Bridge must be initialized from a Svelte component `<script>` block so `$effect` has proper lifecycle (cleanup on component unmount)
 ---
