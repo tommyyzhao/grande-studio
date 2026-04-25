@@ -34,6 +34,13 @@ export interface AudioEngine {
 	readonly currentTime: number;
 	/** Whether the engine is currently playing */
 	readonly isPlaying: boolean;
+
+	/** Set the gain for a clip's GainNode (dB, 0 = unity gain) */
+	setClipGain(clipId: string, gainDb: number): void;
+	/** Set the mute state for a clip (disconnects/reconnects audio path) */
+	setClipMute(clipId: string, muted: boolean): void;
+	/** Set the solo state for a clip */
+	setClipSolo(clipId: string, soloed: boolean): void;
 }
 
 /** Injectable factory so tests can provide a mock AudioContext */
@@ -56,6 +63,16 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 	let playing = false;
 	let playbackOffset = 0; // position in audio file where playback was started
 	let playbackStartedAt = 0; // ctx.currentTime when playback was started
+
+	// Per-clip mixing state
+	interface ClipMixState {
+		gainDb: number;
+		muted: boolean;
+		soloed: boolean;
+		gainNode: GainNode | null;
+		connectedToDestination: boolean;
+	}
+	const clips = new Map<string, ClipMixState>();
 
 	function getContext(): AudioContext {
 		if (!context) {
@@ -101,6 +118,51 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 		};
 	}
 
+	function dbToLinear(db: number): number {
+		return Math.pow(10, db / 20);
+	}
+
+	function getOrCreateClipState(clipId: string): ClipMixState {
+		let clip = clips.get(clipId);
+		if (!clip) {
+			clip = {
+				gainDb: 0,
+				muted: false,
+				soloed: false,
+				gainNode: null,
+				connectedToDestination: false
+			};
+			clips.set(clipId, clip);
+		}
+		return clip;
+	}
+
+	function ensureGainNode(clip: ClipMixState): GainNode {
+		if (!clip.gainNode) {
+			const ctx = getContext();
+			clip.gainNode = ctx.createGain();
+			clip.gainNode.gain.value = dbToLinear(clip.gainDb);
+		}
+		return clip.gainNode;
+	}
+
+	function updateAllClipRouting(): void {
+		if (!context) return;
+		const dest = context.destination;
+		const anySoloed = Array.from(clips.values()).some(c => c.soloed);
+		for (const clip of clips.values()) {
+			if (!clip.gainNode) continue;
+			const shouldBeConnected = anySoloed ? clip.soloed : !clip.muted;
+			if (shouldBeConnected && !clip.connectedToDestination) {
+				clip.gainNode.connect(dest);
+				clip.connectedToDestination = true;
+			} else if (!shouldBeConnected && clip.connectedToDestination) {
+				clip.gainNode.disconnect();
+				clip.connectedToDestination = false;
+			}
+		}
+	}
+
 	async function loadAsset(assetId: string, url: string): Promise<void> {
 		const ctx = getContext();
 		const response = await fetch(url);
@@ -122,6 +184,12 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 	async function dispose(): Promise<void> {
 		stop();
 		buffers.clear();
+		for (const clip of clips.values()) {
+			if (clip.gainNode) {
+				clip.gainNode.disconnect();
+			}
+		}
+		clips.clear();
 		if (context) {
 			await context.close();
 			context = null;
@@ -214,6 +282,28 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 		playbackOffset = clampedTime;
 	}
 
+	function setClipGain(clipId: string, gainDb: number): void {
+		const clip = getOrCreateClipState(clipId);
+		clip.gainDb = gainDb;
+		const gainNode = ensureGainNode(clip);
+		gainNode.gain.value = dbToLinear(gainDb);
+		updateAllClipRouting();
+	}
+
+	function setClipMute(clipId: string, muted: boolean): void {
+		const clip = getOrCreateClipState(clipId);
+		clip.muted = muted;
+		ensureGainNode(clip);
+		updateAllClipRouting();
+	}
+
+	function setClipSolo(clipId: string, soloed: boolean): void {
+		const clip = getOrCreateClipState(clipId);
+		clip.soloed = soloed;
+		ensureGainNode(clip);
+		updateAllClipRouting();
+	}
+
 	return {
 		loadAsset,
 		unloadAsset,
@@ -232,6 +322,9 @@ export function createAudioEngine(contextFactory?: AudioContextFactory): AudioEn
 		},
 		get isPlaying() {
 			return playing;
-		}
+		},
+		setClipGain,
+		setClipMute,
+		setClipSolo
 	};
 }

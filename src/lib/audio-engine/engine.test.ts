@@ -15,6 +15,20 @@ function createMockAudioBuffer(duration = 5.0, sampleRate = 44100): AudioBuffer 
 	} as unknown as AudioBuffer;
 }
 
+interface MockGainNode {
+	gain: { value: number };
+	connect: ReturnType<typeof vi.fn>;
+	disconnect: ReturnType<typeof vi.fn>;
+}
+
+function createMockGainNode(): MockGainNode {
+	return {
+		gain: { value: 1 },
+		connect: vi.fn(),
+		disconnect: vi.fn()
+	};
+}
+
 interface MockSourceNode {
 	buffer: AudioBuffer | null;
 	connect: ReturnType<typeof vi.fn>;
@@ -45,6 +59,7 @@ function createMockAudioContext() {
 	let _currentTime = 0;
 	const mockBuffer = createMockAudioBuffer();
 	const sourceNodes: MockSourceNode[] = [];
+	const gainNodes: MockGainNode[] = [];
 
 	const ctx = {
 		get state() {
@@ -68,10 +83,16 @@ function createMockAudioContext() {
 			sourceNodes.push(node);
 			return node as unknown as AudioBufferSourceNode;
 		}),
+		createGain: vi.fn(() => {
+			const node = createMockGainNode();
+			gainNodes.push(node);
+			return node as unknown as GainNode;
+		}),
 		destination: {},
 		sampleRate: 44100,
 		_mockBuffer: mockBuffer,
 		_sourceNodes: sourceNodes,
+		_gainNodes: gainNodes,
 		_setCurrentTime(t: number) {
 			_currentTime = t;
 		}
@@ -80,6 +101,7 @@ function createMockAudioContext() {
 	return ctx as unknown as AudioContext & {
 		_mockBuffer: AudioBuffer;
 		_sourceNodes: MockSourceNode[];
+		_gainNodes: MockGainNode[];
 		_setCurrentTime: (t: number) => void;
 	};
 }
@@ -577,6 +599,205 @@ describe('AudioEngine', () => {
 			await engine.play('a1');
 			engine.unloadAsset('a2');
 			expect(engine.isPlaying).toBe(true);
+		});
+	});
+
+	describe('clip mixing', () => {
+		/** Helper: returns true if connect calls outnumber disconnect calls */
+		function isConnected(gainNode: MockGainNode): boolean {
+			const connects = (gainNode.connect as ReturnType<typeof vi.fn>).mock.calls.length;
+			const disconnects = (gainNode.disconnect as ReturnType<typeof vi.fn>).mock.calls.length;
+			return connects > disconnects;
+		}
+
+		describe('setClipGain', () => {
+			it('creates a GainNode for the clip', () => {
+				engine.setClipGain('c1', 0);
+				expect(mockContext.createGain).toHaveBeenCalledOnce();
+				expect(mockContext._gainNodes.length).toBe(1);
+			});
+
+			it('sets gain to linear conversion of 0dB (= 1.0)', () => {
+				engine.setClipGain('c1', 0);
+				expect(mockContext._gainNodes[0].gain.value).toBeCloseTo(1.0, 5);
+			});
+
+			it('sets gain correctly for -6dB', () => {
+				engine.setClipGain('c1', -6);
+				expect(mockContext._gainNodes[0].gain.value).toBeCloseTo(Math.pow(10, -6 / 20), 3);
+			});
+
+			it('sets gain correctly for -12dB', () => {
+				engine.setClipGain('c1', -12);
+				expect(mockContext._gainNodes[0].gain.value).toBeCloseTo(Math.pow(10, -12 / 20), 3);
+			});
+
+			it('sets gain correctly for +6dB', () => {
+				engine.setClipGain('c1', 6);
+				expect(mockContext._gainNodes[0].gain.value).toBeCloseTo(Math.pow(10, 6 / 20), 3);
+			});
+
+			it('reuses GainNode when updating gain on same clip', () => {
+				engine.setClipGain('c1', 0);
+				engine.setClipGain('c1', -6);
+				expect(mockContext.createGain).toHaveBeenCalledOnce();
+				expect(mockContext._gainNodes[0].gain.value).toBeCloseTo(Math.pow(10, -6 / 20), 3);
+			});
+
+			it('creates separate GainNodes for different clips', () => {
+				engine.setClipGain('c1', 0);
+				engine.setClipGain('c2', -3);
+				expect(mockContext.createGain).toHaveBeenCalledTimes(2);
+				expect(mockContext._gainNodes.length).toBe(2);
+			});
+
+			it('connects GainNode to destination for unmuted clip', () => {
+				engine.setClipGain('c1', 0);
+				expect(mockContext._gainNodes[0].connect).toHaveBeenCalledWith(mockContext.destination);
+			});
+		});
+
+		describe('setClipMute', () => {
+			it('disconnects GainNode when muting', () => {
+				engine.setClipGain('c1', 0);
+				engine.setClipMute('c1', true);
+				expect(mockContext._gainNodes[0].disconnect).toHaveBeenCalled();
+				expect(isConnected(mockContext._gainNodes[0])).toBe(false);
+			});
+
+			it('reconnects GainNode when unmuting', () => {
+				engine.setClipGain('c1', 0);
+				engine.setClipMute('c1', true);
+				engine.setClipMute('c1', false);
+				expect(isConnected(mockContext._gainNodes[0])).toBe(true);
+			});
+
+			it('muting is idempotent (no extra disconnect calls)', () => {
+				engine.setClipGain('c1', 0);
+				engine.setClipMute('c1', true);
+				const disconnectCount = (mockContext._gainNodes[0].disconnect as ReturnType<typeof vi.fn>).mock.calls.length;
+				engine.setClipMute('c1', true);
+				expect((mockContext._gainNodes[0].disconnect as ReturnType<typeof vi.fn>).mock.calls.length).toBe(disconnectCount);
+			});
+
+			it('auto-creates clip state when muting unknown clip', () => {
+				engine.setClipMute('c1', true);
+				expect(mockContext.createGain).toHaveBeenCalledOnce();
+				expect(isConnected(mockContext._gainNodes[0])).toBe(false);
+			});
+
+			it('does not affect other clips', () => {
+				engine.setClipGain('c1', 0);
+				engine.setClipGain('c2', 0);
+				engine.setClipMute('c1', true);
+				expect(isConnected(mockContext._gainNodes[0])).toBe(false);
+				expect(isConnected(mockContext._gainNodes[1])).toBe(true);
+			});
+		});
+
+		describe('setClipSolo', () => {
+			it('with no solos, all unmuted clips are audible', () => {
+				engine.setClipGain('c1', 0);
+				engine.setClipGain('c2', 0);
+				expect(isConnected(mockContext._gainNodes[0])).toBe(true);
+				expect(isConnected(mockContext._gainNodes[1])).toBe(true);
+			});
+
+			it('soloing one clip disconnects non-soloed clips', () => {
+				engine.setClipGain('c1', 0);
+				engine.setClipGain('c2', 0);
+				engine.setClipSolo('c1', true);
+				expect(isConnected(mockContext._gainNodes[0])).toBe(true);
+				expect(isConnected(mockContext._gainNodes[1])).toBe(false);
+			});
+
+			it('multiple soloed clips all play simultaneously', () => {
+				engine.setClipGain('c1', 0);
+				engine.setClipGain('c2', 0);
+				engine.setClipGain('c3', 0);
+				engine.setClipSolo('c1', true);
+				engine.setClipSolo('c2', true);
+				expect(isConnected(mockContext._gainNodes[0])).toBe(true);
+				expect(isConnected(mockContext._gainNodes[1])).toBe(true);
+				expect(isConnected(mockContext._gainNodes[2])).toBe(false);
+			});
+
+			it('soloed clip plays even if muted (solo overrides mute)', () => {
+				engine.setClipGain('c1', 0);
+				engine.setClipGain('c2', 0);
+				engine.setClipMute('c1', true);
+				expect(isConnected(mockContext._gainNodes[0])).toBe(false);
+				engine.setClipSolo('c1', true);
+				expect(isConnected(mockContext._gainNodes[0])).toBe(true);
+			});
+
+			it('clearing all solos restores prior mute states', () => {
+				engine.setClipGain('c1', 0);
+				engine.setClipGain('c2', 0);
+				// Mute c1
+				engine.setClipMute('c1', true);
+				expect(isConnected(mockContext._gainNodes[0])).toBe(false);
+				expect(isConnected(mockContext._gainNodes[1])).toBe(true);
+
+				// Solo c2 — c1 disconnected (not soloed), c2 connected
+				engine.setClipSolo('c2', true);
+				expect(isConnected(mockContext._gainNodes[0])).toBe(false);
+				expect(isConnected(mockContext._gainNodes[1])).toBe(true);
+
+				// Clear solo on c2 — restores mute states
+				engine.setClipSolo('c2', false);
+				expect(isConnected(mockContext._gainNodes[0])).toBe(false); // still muted
+				expect(isConnected(mockContext._gainNodes[1])).toBe(true);  // unmuted
+			});
+
+			it('mute state persists through solo cycle', () => {
+				engine.setClipGain('c1', 0);
+				engine.setClipGain('c2', 0);
+				// Mute c1, solo c1 (overrides mute), then unsolo
+				engine.setClipMute('c1', true);
+				engine.setClipSolo('c1', true);
+				expect(isConnected(mockContext._gainNodes[0])).toBe(true); // soloed wins
+				engine.setClipSolo('c1', false);
+				expect(isConnected(mockContext._gainNodes[0])).toBe(false); // mute restored
+			});
+
+			it('auto-creates clip state when soloing unknown clip', () => {
+				engine.setClipSolo('c1', true);
+				expect(mockContext.createGain).toHaveBeenCalledOnce();
+				expect(isConnected(mockContext._gainNodes[0])).toBe(true);
+			});
+		});
+
+		describe('each clip has its own GainNode', () => {
+			it('clips have independent GainNodes with independent gain values', () => {
+				engine.setClipGain('c1', 0);
+				engine.setClipGain('c2', -6);
+				engine.setClipGain('c3', 6);
+				expect(mockContext._gainNodes.length).toBe(3);
+				expect(mockContext._gainNodes[0].gain.value).toBeCloseTo(1.0, 3);
+				expect(mockContext._gainNodes[1].gain.value).toBeCloseTo(Math.pow(10, -6 / 20), 3);
+				expect(mockContext._gainNodes[2].gain.value).toBeCloseTo(Math.pow(10, 6 / 20), 3);
+			});
+
+			it('muting one clip does not affect other clips GainNode connections', () => {
+				engine.setClipGain('c1', 0);
+				engine.setClipGain('c2', 0);
+				engine.setClipGain('c3', 0);
+				engine.setClipMute('c2', true);
+				expect(isConnected(mockContext._gainNodes[0])).toBe(true);
+				expect(isConnected(mockContext._gainNodes[1])).toBe(false);
+				expect(isConnected(mockContext._gainNodes[2])).toBe(true);
+			});
+		});
+
+		describe('dispose cleans up clips', () => {
+			it('disconnects all GainNodes and clears clip state on dispose', async () => {
+				engine.setClipGain('c1', 0);
+				engine.setClipGain('c2', -6);
+				await engine.dispose();
+				expect(mockContext._gainNodes[0].disconnect).toHaveBeenCalled();
+				expect(mockContext._gainNodes[1].disconnect).toHaveBeenCalled();
+			});
 		});
 	});
 });
