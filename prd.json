@@ -101,7 +101,7 @@
         "Typecheck passes"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "Application-layer checks are required in addition to RLS, but RLS is the enforcement backstop."
     },
     {
@@ -120,7 +120,7 @@
         "Typecheck passes"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "Agent should auto-generate the secret and set the local URL. User does not need to provide these."
     },
     {

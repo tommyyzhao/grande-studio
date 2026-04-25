@@ -19,6 +19,14 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - Drizzle index definitions use a second arg function to `pgTable()` returning an array
 - Exported type aliases (SourceType, Provider, AssetStatus, BranchType) from schema.ts are reusable across services
 - Use `check()` from `drizzle-orm/pg-core` + `sql` from `drizzle-orm` for CHECK constraints in table definitions
+- Custom SQL migrations (RLS, triggers, etc.): use `drizzle-kit generate --custom --name=<name>` then apply with `psql -d grande_studio -f <file>` (not `drizzle-kit push`)
+- RLS helper `withRLS(db, userId, fn)` at `src/lib/server/db/rls.ts` wraps DB operations in a transaction with `SET LOCAL app.user_id`
+- BetterAuth auth-schema lives at `src/lib/server/db/auth-schema.ts` — managed by BetterAuth, do not rename columns
+- BetterAuth Drizzle adapter: use `drizzleAdapter(db, { provider: 'pg', schema: authSchema })` — pass the auth schema explicitly
+- BetterAuth CLI `migrate` doesn't work with Drizzle adapter — use `npx @better-auth/cli generate` then `drizzle-kit generate` + `drizzle-kit push`
+- BetterAuth reads `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` from `process.env` automatically
+- Auth server at `src/lib/server/auth.ts`; auth client at `src/lib/auth-client.ts`; API route at `src/routes/api/auth/[...all]/+server.ts`
+- `drizzle.config.ts` schema field accepts an array of paths for multiple schema files
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -112,4 +120,40 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - New types added: JobType, JobStatus, QuotaStatus, ExportType, ExportStatus — all reusable across services
   - provider_events table has no updated_at (events are immutable/append-only)
   - quota_reservations references generation_jobs (FK), and generation_jobs references audio_assets (FK) — careful with table definition order in schema.ts
+---
+
+## 2026-04-24 - US-006
+- Enabled Row Level Security (RLS) on all 8 user-owned tables: projects, audio_assets, arrangement_clips, take_edges, generation_jobs, quota_reservations, export_jobs, provider_events
+- Created SELECT/INSERT/UPDATE/DELETE policies on each table referencing `current_setting('app.user_id', true)::uuid` against `owner_id`
+- Created `src/lib/server/db/rls.ts` helper with `withRLS(db, userId, fn)` that wraps queries in a transaction with `SET LOCAL app.user_id`
+- Custom SQL migration at `drizzle/0003_rls_ownership_policies.sql` (generated via `drizzle-kit generate --custom`)
+- Applied migration to local Postgres — 8 ALTER TABLE + 32 CREATE POLICY all succeeded
+- Files changed: drizzle/0003_rls_ownership_policies.sql, drizzle/meta/_journal.json, drizzle/meta/0003_snapshot.json, src/lib/server/db/rls.ts
+- **Learnings for future iterations:**
+  - Drizzle doesn't have first-class RLS support — use `drizzle-kit generate --custom --name=<name>` to create empty SQL migration files for custom DDL
+  - `drizzle-kit push` only applies schema-level changes (tables, columns, indexes), NOT custom SQL migrations — use `psql -d grande_studio -f <migration_file>` to apply custom migrations
+  - RLS policies use `current_setting('app.user_id', true)::uuid` — the `true` arg makes it return NULL (not error) if the setting is missing, so RLS denies all access by default (fail-closed)
+  - `SET LOCAL app.user_id = '<uuid>'` scopes the setting to the current transaction — use `withRLS()` helper from `src/lib/server/db/rls.ts` to wrap DB operations
+  - The table owner (typically the connection role) bypasses RLS by default — in production, use a restricted role or set `ALTER TABLE ... FORCE ROW LEVEL SECURITY` if the app connects as the table owner
+---
+
+## 2026-04-24 - US-007
+- Installed better-auth v1.6.9
+- Configured auth server at `src/lib/server/auth.ts` with email/password provider and Drizzle adapter
+- Created BetterAuth Drizzle schema at `src/lib/server/db/auth-schema.ts` (user, session, account, verification tables)
+- Updated `drizzle.config.ts` to include both app schema and auth schema (array of paths)
+- Created auth API route handler at `src/routes/api/auth/[...all]/+server.ts` using `toSvelteKitHandler`
+- Created auth client at `src/lib/auth-client.ts` using `createAuthClient` from `better-auth/svelte`
+- Auto-generated `BETTER_AUTH_SECRET` via `openssl rand -base64 32` and set `BETTER_AUTH_URL=http://localhost:5173` in `.env`
+- Added both vars to `.env.example` as placeholders
+- Generated Drizzle migration `drizzle/0004_organic_shotgun.sql` for auth tables and pushed to local Postgres
+- Files changed: package.json, package-lock.json, src/lib/server/auth.ts, src/lib/server/db/auth-schema.ts, src/lib/auth-client.ts, src/routes/api/auth/[...all]/+server.ts, .env, .env.example, drizzle.config.ts, drizzle/0004_organic_shotgun.sql, drizzle/meta/*
+- **Learnings for future iterations:**
+  - BetterAuth CLI `migrate` does NOT work with the Drizzle adapter — use `npx @better-auth/cli generate` to get the schema, then `drizzle-kit generate` + `drizzle-kit push`
+  - The CLI generates `auth-schema.ts` at the repo root by default — move it to `src/lib/server/db/auth-schema.ts`
+  - BetterAuth auth tables use singular names (user, session, account, verification) with text IDs — not UUIDs
+  - The Drizzle adapter accepts `schema` option to pass the auth table definitions
+  - `toSvelteKitHandler` from `better-auth/svelte-kit` wraps the auth handler for SvelteKit route handlers
+  - `createAuthClient` from `better-auth/svelte` creates a Svelte-aware auth client with nanostore-based reactivity
+  - BetterAuth reads BETTER_AUTH_SECRET and BETTER_AUTH_URL from process.env automatically — no need to pass them in config
 ---
