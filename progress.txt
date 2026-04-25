@@ -117,6 +117,9 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - Transport auto-stop in arrangement mode: `setTimeout(remaining * 1000)` sets playing=false and resets offset at arrangement end; timer cleared on pause/stop/dispose
 - Arrangement-engine bridge at `src/lib/stores/arrangement-engine-bridge.svelte.ts`: `createArrangementEngineBridge(engine, store)` — call from component context for proper `$effect` lifecycle
 - Bridge diff strategy: structural changes (add/remove) → `setArrangement`; property changes → individual setters (`setClipGain`, `setClipMute`, etc.)
+- Arrangement persistence at `src/lib/stores/arrangement-persistence.svelte.ts`: `createArrangementPersistence(store)` wraps store mutations with debounced DB writes (500ms) and immediate deletes
+- Arrangement API at `src/routes/api/arrangement/+server.ts`: GET (load clips), PATCH (update clip fields), DELETE (soft-delete clip) — all RLS-protected
+- Components use `persistence.updateClip()` / `persistence.removeClip()` for persisted mutations; `store.setClips()` for hydration (no persistence)
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -859,4 +862,30 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - Shallow copy clips (`{ ...c }`) before storing as `previousClips` to break reactive references and enable value comparison
   - `setArrangement` is destructive (stops source nodes, clears clip state) — only call for structural changes, not property updates
   - Bridge must be initialized from a Svelte component `<script>` block so `$effect` has proper lifecycle (cleanup on component unmount)
+---
+
+## 2026-04-25 - US-035
+- Implemented debounced DB persistence and hydration for arrangement state
+- Created server endpoint at `src/routes/api/arrangement/+server.ts`:
+  - GET `?projectId=...`: loads all arrangement clips for a project via RLS, ordered by layerOrder
+  - PATCH with `{ clipId, ...fields }`: updates clip fields in DB, maps client number fields to Drizzle numeric strings
+  - DELETE `?clipId=...`: soft-deletes clip (sets deletedAt + updatedAt)
+- Created client persistence module at `src/lib/stores/arrangement-persistence.svelte.ts`:
+  - `createArrangementPersistence(store)` factory wraps store mutations with persistence
+  - `hydrate(projectId)`: fetches clips from API, converts DB rows to ArrangementClipState, calls store.setClips()
+  - `updateClip(update)`: updates store + schedules debounced 500ms DB write; accumulates changes during debounce window
+  - `removeClip(clipId)`: updates store + immediately persists deletion (cancels pending debounced writes)
+  - `reorderClips(ids)`: reorders store + debounces layer order writes per clip
+  - `flush()`: immediately sends all pending debounced writes
+  - `dispose()`: cancels all timers
+- DB row → ArrangementClipState conversion: numeric strings → numbers, id → clipId, assetId preserved, nullable trimEndSec handled
+- All DB writes use RLS via `withRLS(db, userId, fn)` on the server side
+- Files changed: src/routes/api/arrangement/+server.ts (new), src/lib/stores/arrangement-persistence.svelte.ts (new), prd.json, progress.txt
+- **Learnings for future iterations:**
+  - Persistence module wraps store methods rather than watching reactively — avoids hydration feedback loop where setClips would trigger writes
+  - Components should call `persistence.updateClip()` / `persistence.removeClip()` instead of `store.updateClip()` / `store.removeClip()` for persisted mutations
+  - `store.setClips()` and `store.addClip()` are NOT wrapped — hydration uses setClips directly, and addClip persistence is handled by US-046 (which creates the DB row server-side first)
+  - Debounce accumulation: changes during the debounce window are merged (`{ ...existing, ...new }`) so only one PATCH is sent per clip per window
+  - Drizzle numeric columns return strings; ArrangementClipState uses numbers — conversion in `rowToClipState` uses `Number()` with `|| 0` fallback
+  - `flush()` is useful for beforeunload or explicit save triggers
 ---
