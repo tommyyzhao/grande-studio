@@ -5,8 +5,21 @@ import { withRLS } from '$lib/server/db/rls';
 import { validateJobTransition } from '$lib/services/job-status';
 import { validateAssetTransition } from '$lib/services/asset-status';
 import { buildObjectKey } from '$lib/services/r2-storage';
+import { ProviderError } from '$lib/providers/types';
 import type { ProviderAudioChunk, ProviderGenerationHandle } from '$lib/providers/types';
 import type { GenerationQueueMessage, WorkflowDeps, WorkflowResult } from './types';
+
+// ─── Error Codes ────────────────────────────────────────────────────────────
+// Superset of ProviderErrorCode plus workflow-level error codes
+
+export type WorkflowErrorCode =
+	| 'provider_timeout'
+	| 'provider_validation_error'
+	| 'provider_auth_error'
+	| 'provider_rate_limited'
+	| 'stream_interrupted'
+	| 'audio_assembly_failed'
+	| 'r2_write_failed';
 
 // ─── Request Payload Type ────────────────────────────────────────────────────
 // Matches the shape stored by POST /api/generate in generation_jobs.request_json
@@ -93,6 +106,72 @@ async function transitionStatuses(
 }
 
 /**
+ * Fail both job and asset: set status='failed', record error details, and release quota.
+ * This is best-effort — if the fail transition itself errors, we log and continue.
+ */
+async function failWorkflow(
+	deps: WorkflowDeps,
+	ownerId: string,
+	jobId: string,
+	assetId: string,
+	currentJobStatus: JobStatus,
+	currentAssetStatus: AssetStatus,
+	errorCode: WorkflowErrorCode,
+	errorMessage: string,
+	quotaReservationId: string
+): Promise<WorkflowResult> {
+	// Attempt to transition job and asset to 'failed'
+	const jobCheck = validateJobTransition(currentJobStatus, 'failed');
+	const assetCheck = validateAssetTransition(currentAssetStatus, 'failed');
+
+	const now = new Date();
+	const errorJson = { code: errorCode, message: errorMessage, failedAt: now.toISOString() };
+
+	if (jobCheck.valid && assetCheck.valid) {
+		try {
+			await withRLS(deps.db, ownerId, async (tx) => {
+				await tx
+					.update(generationJobs)
+					.set({
+						status: 'failed' as JobStatus,
+						errorCode,
+						errorJson,
+						updatedAt: now
+					})
+					.where(eq(generationJobs.id, jobId));
+				await tx
+					.update(audioAssets)
+					.set({
+						status: 'failed' as AssetStatus,
+						errorJson,
+						updatedAt: now
+					})
+					.where(eq(audioAssets.id, assetId));
+			});
+		} catch (dbError) {
+			console.error(`[workflow] Failed to write failure state to DB for job=${jobId}:`, dbError);
+		}
+	} else {
+		console.error(
+			`[workflow] Cannot transition to failed: job(${currentJobStatus}→failed): ${jobCheck.valid ? 'ok' : (jobCheck as { reason: string }).reason}, ` +
+			`asset(${currentAssetStatus}→failed): ${assetCheck.valid ? 'ok' : (assetCheck as { reason: string }).reason}`
+		);
+	}
+
+	// Release quota reservation (best-effort)
+	try {
+		const releaseResult = await deps.quota.releaseQuota(quotaReservationId);
+		if (!releaseResult.ok) {
+			console.warn(`[workflow] Quota release failed for reservation=${quotaReservationId}: ${releaseResult.error}`);
+		}
+	} catch (quotaError) {
+		console.error(`[workflow] Quota release threw for reservation=${quotaReservationId}:`, quotaError);
+	}
+
+	return { ok: false, error: `${errorCode}: ${errorMessage}`, jobId, assetId };
+}
+
+/**
  * Generation workflow: processes a generation job from the queue.
  *
  * Steps:
@@ -102,13 +181,19 @@ async function transitionStatuses(
  * 4. Call provider adapter (text-to-music, instrumental, or cover/restyle)
  * 5. Stream audio chunks and assemble into final byte array
  * 6. Persist assembled audio to R2
- * 7. Finalize: asset→ready, job→succeeded (error handling in US-023)
+ * 7. Finalize: asset→ready, job→succeeded, commit quota
+ *
+ * On any failure in steps 4-7: job and asset → 'failed', quota released.
  */
 export async function runGenerationWorkflow(
 	message: GenerationQueueMessage,
 	deps: WorkflowDeps
 ): Promise<WorkflowResult> {
-	const { jobId, assetId, ownerId } = message;
+	const { jobId, assetId, ownerId, quotaReservationId } = message;
+
+	// Track current statuses so failWorkflow knows the right transition source
+	let currentJobStatus: JobStatus = 'created';
+	let currentAssetStatus: AssetStatus = 'created';
 
 	// ── Step 1: Fetch job and asset ──────────────────────────────────────────
 
@@ -138,6 +223,9 @@ export async function runGenerationWorkflow(
 		return { ok: false, error: `Asset not found: ${assetId}`, jobId, assetId };
 	}
 
+	currentJobStatus = job.status;
+	currentAssetStatus = asset.status;
+
 	// ── Step 2: Transition to 'queued' ──────────────────────────────────────
 
 	const toQueued = await transitionStatuses(
@@ -145,9 +233,9 @@ export async function runGenerationWorkflow(
 		ownerId,
 		jobId,
 		assetId,
-		job.status,
+		currentJobStatus,
 		'queued',
-		asset.status,
+		currentAssetStatus,
 		'queued'
 	);
 
@@ -155,6 +243,9 @@ export async function runGenerationWorkflow(
 		console.error(`[workflow] Failed to transition to queued: ${toQueued.error}`);
 		return { ok: false, error: toQueued.error, jobId, assetId };
 	}
+
+	currentJobStatus = 'queued';
+	currentAssetStatus = 'queued';
 
 	// ── Step 3: Transition to 'generating' ──────────────────────────────────
 
@@ -174,101 +265,185 @@ export async function runGenerationWorkflow(
 		return { ok: false, error: toGenerating.error, jobId, assetId };
 	}
 
+	currentJobStatus = 'generating';
+	currentAssetStatus = 'generating';
+
 	// ── Step 4: Call provider ────────────────────────────────────────────────
 
 	const requestPayload = job.requestJson as GenerationRequestPayload;
 
-	// For cover/restyle, resolve source audio signed URL from R2
-	let sourceAudioUrl: string | undefined;
-	if (requestPayload.mode === 'cover_restyle' && requestPayload.sourceAssetId) {
-		const sourceAsset = await withRLS(deps.db, ownerId, async (tx) => {
-			const rows = await tx
-				.select({ r2ObjectKey: audioAssets.r2ObjectKey })
-				.from(audioAssets)
-				.where(eq(audioAssets.id, requestPayload.sourceAssetId!));
-			return rows[0] ?? null;
-		});
+	let handle: ProviderGenerationHandle;
+	try {
+		// For cover/restyle, resolve source audio signed URL from R2
+		let sourceAudioUrl: string | undefined;
+		if (requestPayload.mode === 'cover_restyle' && requestPayload.sourceAssetId) {
+			const sourceAsset = await withRLS(deps.db, ownerId, async (tx) => {
+				const rows = await tx
+					.select({ r2ObjectKey: audioAssets.r2ObjectKey })
+					.from(audioAssets)
+					.where(eq(audioAssets.id, requestPayload.sourceAssetId!));
+				return rows[0] ?? null;
+			});
 
-		if (!sourceAsset?.r2ObjectKey) {
-			console.error(`[workflow] Source asset not found or has no R2 key: ${requestPayload.sourceAssetId}`);
-			return { ok: false, error: `Source asset not found or has no R2 key: ${requestPayload.sourceAssetId}`, jobId, assetId };
+			if (!sourceAsset?.r2ObjectKey) {
+				return failWorkflow(
+					deps, ownerId, jobId, assetId,
+					currentJobStatus, currentAssetStatus,
+					'provider_validation_error',
+					`Source asset not found or has no R2 key: ${requestPayload.sourceAssetId}`,
+					quotaReservationId
+				);
+			}
+
+			sourceAudioUrl = await deps.r2.getSignedUrl(sourceAsset.r2ObjectKey);
 		}
 
-		sourceAudioUrl = await deps.r2.getSignedUrl(sourceAsset.r2ObjectKey);
-	}
-
-	// Call the appropriate generate method based on job type
-	let handle: ProviderGenerationHandle;
-	switch (requestPayload.mode) {
-		case 'text_to_music':
-			handle = await deps.provider.generateTextToMusic({
-				prompt: requestPayload.prompt,
-				lyrics: requestPayload.lyrics,
-				instrumental: false,
-				lyricsOptimizer: requestPayload.lyricsOptimizer,
-				structureTags: requestPayload.structureTags
-			});
-			break;
-		case 'instrumental':
-			handle = await deps.provider.generateInstrumental({
-				prompt: requestPayload.prompt,
-				structureTags: requestPayload.structureTags
-			});
-			break;
-		case 'cover_restyle':
-			handle = await deps.provider.generateCoverRestyle({
-				prompt: requestPayload.prompt,
-				sourceAudioUrl: sourceAudioUrl!,
-				lyrics: requestPayload.lyrics
-			});
-			break;
+		// Call the appropriate generate method based on job type
+		switch (requestPayload.mode) {
+			case 'text_to_music':
+				handle = await deps.provider.generateTextToMusic({
+					prompt: requestPayload.prompt,
+					lyrics: requestPayload.lyrics,
+					instrumental: false,
+					lyricsOptimizer: requestPayload.lyricsOptimizer,
+					structureTags: requestPayload.structureTags
+				});
+				break;
+			case 'instrumental':
+				handle = await deps.provider.generateInstrumental({
+					prompt: requestPayload.prompt,
+					structureTags: requestPayload.structureTags
+				});
+				break;
+			case 'cover_restyle':
+				handle = await deps.provider.generateCoverRestyle({
+					prompt: requestPayload.prompt,
+					sourceAudioUrl: sourceAudioUrl!,
+					lyrics: requestPayload.lyrics
+				});
+				break;
+		}
+	} catch (error) {
+		if (error instanceof ProviderError) {
+			return failWorkflow(
+				deps, ownerId, jobId, assetId,
+				currentJobStatus, currentAssetStatus,
+				error.code,
+				error.message,
+				quotaReservationId
+			);
+		}
+		return failWorkflow(
+			deps, ownerId, jobId, assetId,
+			currentJobStatus, currentAssetStatus,
+			'provider_validation_error',
+			error instanceof Error ? error.message : 'Unknown error during provider call',
+			quotaReservationId
+		);
 	}
 
 	// ── Step 5: Stream audio chunks and assemble bytes ──────────────────────
 
 	if (!deps.provider.streamGenerationAudio) {
-		console.error('[workflow] Provider does not support audio streaming or URL retrieval');
-		return { ok: false, error: 'Provider does not support audio streaming or URL retrieval', jobId, assetId };
+		return failWorkflow(
+			deps, ownerId, jobId, assetId,
+			currentJobStatus, currentAssetStatus,
+			'provider_validation_error',
+			'Provider does not support audio streaming or URL retrieval',
+			quotaReservationId
+		);
 	}
 
 	const chunks: ProviderAudioChunk[] = [];
 	let receivingAudioTransitioned = false;
 
-	for await (const chunk of deps.provider.streamGenerationAudio(handle)) {
-		// Transition to 'receiving_audio' on first chunk
-		if (!receivingAudioTransitioned) {
-			const toReceiving = await transitionStatuses(
-				deps, ownerId, jobId, assetId,
-				'generating', 'receiving_audio',
-				'generating', 'receiving_audio'
-			);
-			if (!toReceiving.ok) {
-				console.error(`[workflow] Failed to transition to receiving_audio: ${toReceiving.error}`);
-				return { ok: false, error: toReceiving.error, jobId, assetId };
+	try {
+		for await (const chunk of deps.provider.streamGenerationAudio(handle)) {
+			// Transition to 'receiving_audio' on first chunk
+			if (!receivingAudioTransitioned) {
+				const toReceiving = await transitionStatuses(
+					deps, ownerId, jobId, assetId,
+					'generating', 'receiving_audio',
+					'generating', 'receiving_audio'
+				);
+				if (!toReceiving.ok) {
+					console.error(`[workflow] Failed to transition to receiving_audio: ${toReceiving.error}`);
+					return failWorkflow(
+						deps, ownerId, jobId, assetId,
+						currentJobStatus, currentAssetStatus,
+						'stream_interrupted',
+						`Failed to transition to receiving_audio: ${toReceiving.error}`,
+						quotaReservationId
+					);
+				}
+				currentJobStatus = 'receiving_audio';
+				currentAssetStatus = 'receiving_audio';
+				receivingAudioTransitioned = true;
 			}
-			receivingAudioTransitioned = true;
+			chunks.push(chunk);
 		}
-		chunks.push(chunk);
+	} catch (error) {
+		// Stream broke before a valid file was fully received
+		if (error instanceof ProviderError) {
+			return failWorkflow(
+				deps, ownerId, jobId, assetId,
+				currentJobStatus, currentAssetStatus,
+				error.code,
+				error.message,
+				quotaReservationId
+			);
+		}
+		return failWorkflow(
+			deps, ownerId, jobId, assetId,
+			currentJobStatus, currentAssetStatus,
+			'stream_interrupted',
+			error instanceof Error ? error.message : 'Stream broke before audio was fully received',
+			quotaReservationId
+		);
 	}
 
-	const audioBytes = assembleAudioChunks(chunks);
+	// Assemble audio bytes
+	let audioBytes: Uint8Array;
+	try {
+		audioBytes = assembleAudioChunks(chunks);
+	} catch (error) {
+		return failWorkflow(
+			deps, ownerId, jobId, assetId,
+			currentJobStatus, currentAssetStatus,
+			'audio_assembly_failed',
+			error instanceof Error ? error.message : 'Failed to assemble audio chunks',
+			quotaReservationId
+		);
+	}
 
 	if (audioBytes.length === 0) {
-		console.error('[workflow] No audio data received from provider');
-		return { ok: false, error: 'No audio data received from provider', jobId, assetId };
+		return failWorkflow(
+			deps, ownerId, jobId, assetId,
+			currentJobStatus, currentAssetStatus,
+			'audio_assembly_failed',
+			'No audio data received from provider',
+			quotaReservationId
+		);
 	}
 
 	// ── Step 6: Persist to R2 ───────────────────────────────────────────────
 
 	const toPersisting = await transitionStatuses(
 		deps, ownerId, jobId, assetId,
-		'receiving_audio', 'persisting',
-		'receiving_audio', 'persisting'
+		currentJobStatus, 'persisting',
+		currentAssetStatus, 'persisting'
 	);
 	if (!toPersisting.ok) {
-		console.error(`[workflow] Failed to transition to persisting: ${toPersisting.error}`);
-		return { ok: false, error: toPersisting.error, jobId, assetId };
+		return failWorkflow(
+			deps, ownerId, jobId, assetId,
+			currentJobStatus, currentAssetStatus,
+			'r2_write_failed',
+			`Failed to transition to persisting: ${toPersisting.error}`,
+			quotaReservationId
+		);
 	}
+	currentJobStatus = 'persisting';
+	currentAssetStatus = 'persisting';
 
 	// Extract audio metadata from provider response where available
 	const extraInfo = (handle.metadata as { extraInfo?: { audio_format?: string; audio_sample_rate?: number; duration?: number } } | undefined)?.extraInfo;
@@ -277,20 +452,43 @@ export async function runGenerationWorkflow(
 	const durationSec = extraInfo?.duration ?? null;
 
 	const r2ObjectKey = buildObjectKey(ownerId, message.projectId, assetId, format);
-	await deps.r2.uploadAudio(r2ObjectKey, audioBytes, formatToContentType(format));
+
+	try {
+		await deps.r2.uploadAudio(r2ObjectKey, audioBytes, formatToContentType(format));
+	} catch (error) {
+		return failWorkflow(
+			deps, ownerId, jobId, assetId,
+			currentJobStatus, currentAssetStatus,
+			'r2_write_failed',
+			error instanceof Error ? error.message : 'Failed to upload audio to R2',
+			quotaReservationId
+		);
+	}
 
 	// ── Step 7: Finalize — update asset to 'ready', job to 'succeeded' ──────
 
 	const jobFinalCheck = validateJobTransition('persisting', 'succeeded');
 	if (!jobFinalCheck.valid) {
 		console.error(`[workflow] Invalid job transition persisting→succeeded: ${jobFinalCheck.reason}`);
-		return { ok: false, error: jobFinalCheck.reason, jobId, assetId };
+		return failWorkflow(
+			deps, ownerId, jobId, assetId,
+			currentJobStatus, currentAssetStatus,
+			'audio_assembly_failed',
+			`Invalid job transition persisting→succeeded: ${jobFinalCheck.reason}`,
+			quotaReservationId
+		);
 	}
 
 	const assetFinalCheck = validateAssetTransition('persisting', 'ready');
 	if (!assetFinalCheck.valid) {
 		console.error(`[workflow] Invalid asset transition persisting→ready: ${assetFinalCheck.reason}`);
-		return { ok: false, error: assetFinalCheck.reason, jobId, assetId };
+		return failWorkflow(
+			deps, ownerId, jobId, assetId,
+			currentJobStatus, currentAssetStatus,
+			'audio_assembly_failed',
+			`Invalid asset transition persisting→ready: ${assetFinalCheck.reason}`,
+			quotaReservationId
+		);
 	}
 
 	const now = new Date();
@@ -323,6 +521,16 @@ export async function runGenerationWorkflow(
 			})
 			.where(eq(generationJobs.id, jobId));
 	});
+
+	// Commit quota on success
+	try {
+		const commitResult = await deps.quota.commitQuota(quotaReservationId);
+		if (!commitResult.ok) {
+			console.warn(`[workflow] Quota commit failed for reservation=${quotaReservationId}: ${commitResult.error}`);
+		}
+	} catch (quotaError) {
+		console.error(`[workflow] Quota commit threw for reservation=${quotaReservationId}:`, quotaError);
+	}
 
 	return { ok: true, jobId, assetId };
 }

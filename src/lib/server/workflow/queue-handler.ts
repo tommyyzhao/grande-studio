@@ -1,6 +1,7 @@
 import { createLocalDb, createNeonDb } from '$lib/server/db';
 import { createMiniMaxAdapter } from '$lib/providers/minimax/adapter';
 import { createR2StorageService } from '$lib/services/r2-storage';
+import { createQuotaService, createDrizzleQuotaRepository } from '$lib/services/quota';
 import { runGenerationWorkflow } from './generation-workflow';
 import type { GenerationQueueMessage, MessageBatchLike, WorkflowDeps, WorkflowEnv } from './types';
 
@@ -26,7 +27,10 @@ function buildWorkflowDeps(env?: WorkflowEnv): WorkflowDeps {
 	const baseUrl = env?.BETTER_AUTH_URL ?? process.env.BETTER_AUTH_URL ?? '';
 	const r2 = createR2StorageService(bucket, signingSecret, baseUrl);
 
-	return { db, provider, r2 };
+	const quotaRepo = createDrizzleQuotaRepository(db);
+	const quota = createQuotaService(quotaRepo);
+
+	return { db, provider, r2, quota };
 }
 
 /**

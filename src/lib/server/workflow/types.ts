@@ -3,6 +3,7 @@ import type { Database } from '$lib/server/db';
 import type { MusicProvider } from '$lib/providers/types';
 import type { R2StorageService } from '$lib/services/r2-storage';
 import type { R2BucketLike } from '$lib/services/r2-storage';
+import type { QuotaService } from '$lib/services/quota';
 
 // ─── Queue Message ────────────────────────────────────────────────────────────
 
@@ -53,6 +54,7 @@ export interface WorkflowDeps {
 	db: Database;
 	provider: MusicProvider;
 	r2: R2StorageService;
+	quota: QuotaService;
 }
 
 // ─── Workflow Result ──────────────────────────────────────────────────────────

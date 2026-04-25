@@ -65,6 +65,21 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - `QueueLike` interface at `src/app.d.ts` abstracts Cloudflare Queue producer API — `send(message)` and `sendBatch(messages)`
 - `GENERATION_QUEUE` binding in wrangler.jsonc is the Cloudflare Queue for generation jobs
 - Queue message shape: `{ jobId, assetId, projectId, ownerId, provider, jobType, idempotencyKey, quotaReservationId }`
+- Generation workflow at `src/lib/server/workflow/generation-workflow.ts` — `runGenerationWorkflow(message, deps)` processes a queue message through steps
+- Workflow types at `src/lib/server/workflow/types.ts`: `GenerationQueueMessage`, `WorkflowDeps`, `WorkflowResult`, `MessageBatchLike`, `QueueMessageHandle`
+- Queue consumer handler at `src/lib/server/workflow/queue-handler.ts`: `handleGenerationQueue(batch)` for Cloudflare Queue consumer, `processGenerationMessage(msg)` for individual messages
+- `transitionStatuses()` in generation-workflow.ts atomically updates both job and asset status in a single RLS transaction — validates transitions before writing
+- wrangler.jsonc queue consumer config: `max_batch_size: 1`, `max_retries: 3` for generation queue
+- `GenerationRequestPayload` at `generation-workflow.ts` matches `generation_jobs.request_json` shape — cast jsonb with `as`
+- `assembleAudioChunks()` concatenates `ProviderAudioChunk[]` into a single `Uint8Array` via `.set()` with running offset
+- Audio metadata from MiniMax is in `handle.metadata.extraInfo` — `audio_format`, `audio_sample_rate`, `duration` may be null
+- `formatToContentType()` maps format to MIME: mp3→audio/mpeg, wav→audio/wav, flac→audio/flac
+- `WorkflowEnv` at `types.ts` mirrors Cloudflare Workers env bindings; `buildWorkflowDeps(env)` in queue-handler constructs all deps
+- `R2_SIGNING_SECRET` env var is required for signed URL generation (cover/restyle source audio)
+- `failWorkflow()` in generation-workflow.ts handles all failure paths: transitions to 'failed', writes error_json/error_code, releases quota — all best-effort
+- `WorkflowErrorCode` at generation-workflow.ts: `ProviderErrorCode` | `stream_interrupted` | `audio_assembly_failed` | `r2_write_failed`
+- Track `currentJobStatus`/`currentAssetStatus` as mutable vars in workflow to pass correct source state to `failWorkflow`
+- Quota committed on workflow success, released on failure; if release fails, cron TTL (US-061) expires it
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -470,4 +485,80 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - `modeToJobType()` maps MusicRequestMode → JobType (they happen to be the same values but the types are distinct)
   - Asset title is truncated from prompt (first 80 chars) for display purposes
   - Validation warnings (e.g., unsupported structure tags) are returned in the response but don't block generation
+---
+
+## 2026-04-25 - US-021
+- Created Cloudflare Workflow scaffold for generation job processing
+- Created `src/lib/server/workflow/types.ts`: `GenerationQueueMessage` (matches queue send shape), `MessageBatchLike`/`QueueMessageHandle` (Cloudflare Queue consumer abstractions), `WorkflowDeps`, `WorkflowResult`
+- Created `src/lib/server/workflow/generation-workflow.ts`: `runGenerationWorkflow()` with 7 named steps:
+  - Step 1: Fetch job and asset from DB via RLS
+  - Step 2: Transition both to 'queued' (validated via state machines)
+  - Step 3: Transition both to 'generating' (validated via state machines)
+  - Steps 4-7: Placeholders for provider call, audio assembly, R2 persist, finalize (US-022/023)
+- Created `src/lib/server/workflow/queue-handler.ts`: `handleGenerationQueue(batch)` processes messages individually with ack/retry, `processGenerationMessage(msg)` for single-message processing
+- Added queue consumer config to `wrangler.jsonc`: `grande-studio-generation` queue, `max_batch_size: 1`, `max_retries: 3`
+- `transitionStatuses()` helper atomically updates both job and asset status within a single RLS transaction
+- If job/asset not found, workflow logs error and returns `{ ok: false }` immediately
+- All 252 tests pass, typecheck passes (0 errors, 0 warnings)
+- Files changed: src/lib/server/workflow/types.ts (new), src/lib/server/workflow/generation-workflow.ts (new), src/lib/server/workflow/queue-handler.ts (new), wrangler.jsonc
+- **Learnings for future iterations:**
+  - Cloudflare Queue consumer abstractions (`MessageBatchLike`, `QueueMessageHandle`) follow the same pattern as `R2BucketLike`/`QueueLike` — avoids `@cloudflare/workers-types` dependency
+  - `transitionStatuses()` validates both job and asset transitions before writing — if either is invalid, neither is updated
+  - Workflow steps 4-7 are clearly labeled placeholders for US-022 (happy path) and US-023 (error handling)
+  - Queue consumer uses `max_batch_size: 1` so each generation job is processed individually (simpler error handling)
+  - The queue handler exports `handleGenerationQueue` for wiring as the worker's `queue` export alongside SvelteKit's `fetch` handler
+---
+
+## 2026-04-25 - US-022
+- Implemented full happy-path workflow: provider call → streaming → assembly → R2 persist → finalize
+- Updated `WorkflowDeps` to include `MusicProvider` and `R2StorageService` (types.ts)
+- Added `WorkflowEnv` interface for Cloudflare Workers env bindings
+- Implemented Steps 4-7 in `generation-workflow.ts`:
+  - Step 4: Reads `request_json` from job, resolves source audio URL for cover/restyle, calls appropriate adapter method
+  - Step 5: Streams audio chunks via `streamGenerationAudio`, transitions to `receiving_audio` on first chunk, assembles all chunks
+  - Step 6: Transitions to `persisting`, extracts audio metadata from `extra_info`, uploads to R2 via `buildObjectKey` + `uploadAudio`
+  - Step 7: Validates transitions, atomically updates asset (status='ready', r2_object_key, format, sampleRate, durationSec, providerJobId) and job (status='succeeded', response_json with metadata)
+- Added `assembleAudioChunks()` — concatenates decoded chunk Uint8Arrays into a single byte array
+- Added `formatToContentType()` — maps format strings to MIME types (mp3→audio/mpeg, wav→audio/wav, etc.)
+- Added `GenerationRequestPayload` type matching the shape stored by POST /api/generate
+- Updated `queue-handler.ts`: `buildWorkflowDeps(env)` constructs DB, MiniMax adapter, and R2 service from env bindings
+- Added `R2_SIGNING_SECRET` to `.env.example`
+- Non-streaming fallback handled transparently — adapter's `streamGenerationAudio` fetches URL and yields single chunk
+- All 252 tests pass, typecheck passes (0 errors, 0 warnings)
+- Files changed: src/lib/server/workflow/types.ts, src/lib/server/workflow/generation-workflow.ts, src/lib/server/workflow/queue-handler.ts, .env.example
+- **Learnings for future iterations:**
+  - `GenerationRequestPayload` type matches the shape in `generation_jobs.request_json` — cast with `as` since jsonb is untyped
+  - Audio metadata (format, sample_rate, duration) comes from `handle.metadata.extraInfo` — may be null if provider doesn't include it
+  - `assembleAudioChunks` uses `Uint8Array.set()` for efficient concatenation — avoids repeated array copies
+  - `formatToContentType` maps 'mp3'→'audio/mpeg' (not 'audio/mp3') for correct MIME types
+  - For cover/restyle, workflow resolves source asset's R2 key then generates signed URL for MiniMax to download
+  - `sampleRate` is integer (number), `durationSec` is numeric (string in Drizzle) — use `String(durationSec)` when setting
+  - Step 7 validates transitions separately then does a single RLS transaction with all field updates (not using `transitionStatuses` helper since it only sets status/updatedAt)
+  - `WorkflowEnv` provides env bindings for queue handler — falls back to `process.env` for vars not in env
+  - `buildWorkflowDeps` throws early if `MINIMAX_API_KEY` or `AUDIO_BUCKET` is missing — fail-fast pattern
+---
+
+## 2026-04-25 - US-023
+- Implemented comprehensive error handling in the generation workflow
+- Added `QuotaService` to `WorkflowDeps` interface and wired it up in `buildWorkflowDeps` via `createDrizzleQuotaRepository` + `createQuotaService`
+- Defined `WorkflowErrorCode` type: union of `ProviderErrorCode` plus `stream_interrupted`, `audio_assembly_failed`, `r2_write_failed`
+- Created `failWorkflow()` helper: transitions job+asset to 'failed', writes `error_json` (code, message, failedAt) and `error_code` to DB, releases quota — all best-effort with logging on secondary failures
+- Wrapped Steps 4-7 with try/catch:
+  - Step 4 (provider call): catches `ProviderError` and maps to appropriate error code (auth/timeout/rate_limited/validation)
+  - Step 5 (streaming): catches stream interruptions → `stream_interrupted`; ProviderError during streaming preserves original code
+  - Step 5 (assembly): catches assembly failures → `audio_assembly_failed`; empty audio also → `audio_assembly_failed`
+  - Step 6 (R2 write): catches upload failures → `r2_write_failed`
+- On success (Step 7): commits quota reservation via `deps.quota.commitQuota()`
+- On all failure paths: releases quota reservation via `deps.quota.releaseQuota()` (best-effort, logged if fails)
+- Tracked `currentJobStatus` and `currentAssetStatus` throughout workflow so `failWorkflow` uses correct transition source
+- Failed jobs are never mutated back — state machine validation in `failWorkflow` prevents invalid transitions
+- All 252 tests pass, typecheck passes (0 errors, 0 warnings)
+- Files changed: src/lib/server/workflow/types.ts, src/lib/server/workflow/generation-workflow.ts, src/lib/server/workflow/queue-handler.ts
+- **Learnings for future iterations:**
+  - `failWorkflow()` is best-effort: if the DB write fails, we log but don't throw — prevents masking the original error
+  - `WorkflowErrorCode` is a superset of `ProviderErrorCode` — workflow-level codes add `stream_interrupted`, `audio_assembly_failed`, `r2_write_failed`
+  - Quota is committed only on success (Step 7), released on all failure paths — if quota release itself fails, it will expire via the cron TTL mechanism (US-061)
+  - Track `currentJobStatus`/`currentAssetStatus` as mutable variables throughout the workflow to ensure `failWorkflow` always has the correct transition source state
+  - `error_json` shape: `{ code: string, message: string, failedAt: string }` — stored on both `generation_jobs.error_json` and `audio_assets.error_json`
+  - `error_code` is a denormalized text field on `generation_jobs` only — enables fast filtering/querying by error type
 ---
