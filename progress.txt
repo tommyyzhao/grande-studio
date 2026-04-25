@@ -11,6 +11,7 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - Svelte 5 `{@const}` tags are only valid inside `{#if}`, `{#each}`, `{#snippet}`, etc. — NOT inside raw `<div>` elements; use `$derived` in the script block instead
 - Self-closing `<div />` triggers Svelte warnings — always use `<div></div>` for non-void HTML elements
 - Pointer Events (`onpointerdown`/`onpointermove`/`onpointerup`) with `setPointerCapture` for drag interactions — ensures events fire even when pointer leaves the element
+- Extract `$effect` body logic into pure functions for testability — e.g., `diffAndDispatch()` in arrangement-engine-bridge is a pure function testable without Svelte runtime
 - `BlockAsset` type includes `jobId`, `errorCode`, `lyrics` fields — use `jobId` for SSE tracking and cancel/retry; `errorCode` for error display on failed cards
 - `PendingBlockCard` component at `src/lib/components/pending-block-card.svelte` handles all non-ready states; `BlockCard` at `block-card.svelte` handles ready state — parent conditionally renders based on `asset.status`
 - New shadcn-svelte components may need `WithoutChildrenOrChild` type and/or `WithoutChild` type in `src/lib/utils.ts` — add if typecheck fails after installing components
@@ -1222,4 +1223,17 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - When switching between playback modes, always stop the other mode's sources to prevent audio overlap (`stopSource()` for single-asset, `stopAllClipSources()` for arrangement)
   - The transport bar component (`transport-bar.svelte`) was already fully wired from US-041 — this story's main change was fixing the engine's play priority
   - Pre-existing typecheck errors in `src/lib/components/ui/button/index.ts` (shadcn-svelte ButtonProps/ButtonSize/ButtonVariant exports) — not related to this story
+---
+
+## 2026-04-25 - US-053
+- What was implemented: Verified and tested the end-to-end wiring of arrangement clip card controls to the audio engine. Extracted the bridge's diff/dispatch logic into a pure testable function (`diffAndDispatch`) and wrote comprehensive tests covering all property change paths.
+- Files changed:
+  - `src/lib/stores/arrangement-engine-bridge.svelte.ts` — Refactored: extracted `diffAndDispatch()` pure function and `BridgeEngineTarget` interface from the `$effect` body. The `$effect` wrapper in `createArrangementEngineBridge` is now a thin wrapper calling `diffAndDispatch`.
+  - `src/lib/stores/arrangement-engine-bridge.test.ts` — New test file with 25 tests covering: structural changes (add/remove → setArrangement), individual property changes (gain, mute, solo, offset, trim, duration, assetId → individual setters), no-op when unchanged, multiple simultaneous changes, multi-clip independent dispatch, chained calls simulating reactive loop, and layerOrder being UI-only (no engine dispatch).
+- **Learnings for future iterations:**
+  - The full control flow is: clip card UI handler → `onUpdateClip` callback → `arrangementPersistence.updateClip` → `store.updateClip` (reactive $state) → bridge `$effect` fires → `diffAndDispatch` compares snapshots → individual engine setters
+  - Gain, mute, and solo changes are audible in real-time during playback (they update GainNode.gain.value and routing directly)
+  - Start offset, trim, and clip duration changes update engine internal state but do NOT reschedule active source nodes — changes take effect on next `play()` call (standard DAW behavior)
+  - `layerOrder` is UI-only display ordering and has no engine dispatch — the bridge correctly ignores it
+  - Extracting `$effect` body logic into a pure function makes it testable without Svelte's reactive runtime
 ---
