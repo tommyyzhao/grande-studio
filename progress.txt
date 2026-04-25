@@ -6,7 +6,7 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - POST `/api/arrangement` creates arrangement_clip rows — auto-fetches asset duration and auto-increments layerOrder
 - `createArrangementPersistence(arrangementStore)` wraps the store with debounced DB writes — must call `flush()` and `dispose()` in `onDestroy`
 - `ArrangementClipState` has `assetId` but not title — maintain a separate `Map<assetId, title>` for display
-- Arrangement clip card component at `src/lib/components/arrangement-clip-card.svelte` — expects `clip: ArrangementClipState`, `title: string`, and optional `onUpdateClip: (update: ClipUpdate) => void` callback for persisted edits
+- Arrangement clip card component at `src/lib/components/arrangement-clip-card.svelte` — expects `clip: ArrangementClipState`, `title: string`, `assetDurationSec: number | null`, and optional `onUpdateClip: (update: ClipUpdate) => void` callback for persisted edits
 - Svelte `class:` directive cannot use Tailwind opacity modifiers (e.g. `class:ring-foreground/10={cond}` fails) — use computed class strings with `$derived.by()` instead
 - `BlockAsset` type includes `jobId`, `errorCode`, `lyrics` fields — use `jobId` for SSE tracking and cancel/retry; `errorCode` for error display on failed cards
 - `PendingBlockCard` component at `src/lib/components/pending-block-card.svelte` handles all non-ready states; `BlockCard` at `block-card.svelte` handles ready state — parent conditionally renders based on `asset.status`
@@ -1144,4 +1144,25 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - `ArrangementClipCard` now accepts `onUpdateClip?: (update: ClipUpdate) => void` callback — same pattern can be reused for trim, gain, mute/solo, and loop controls in US-048 through US-051
   - shadcn-svelte `Button` with `size="icon"` and custom `class="size-7"` works well for compact inline stepper controls
   - `tabular-nums` Tailwind class ensures monospace number display in the offset label (prevents layout shift on value change)
+---
+
+## 2026-04-25 - US-048
+- Added trim start/end numeric stepper controls to arrangement clip card
+- Trim controls are in a collapsible section toggled by a scissors icon button
+- Trim start: +/- 0.5s steppers, min 0, max = trimEnd - 0.5s
+- Trim end: +/- 0.5s steppers, min = trimStart + 0.5s, max = asset duration
+- When trim shortens below clipDurationSec, clipDurationSec is automatically reduced to match
+- Trim values stored on clip (non-destructive — original audio asset unchanged)
+- Added `assetDurationSec` prop to clip card for proper trim bounds
+- Added `assetDurations` Map in workspace page to track asset durations alongside titles
+- Changes flow through `onUpdateClip` → arrangement store → debounced DB persistence → audio engine
+- Files changed:
+  - `src/lib/components/arrangement-clip-card.svelte` — added trim controls UI, `Scissors` icon toggle, trim increment/decrement handlers, `assetDurationSec` prop, `formatSec` helper
+  - `src/routes/+page.svelte` — added `assetDurations` Map, passed `assetDurationSec` to `ArrangementClipCard`
+  - `prd.json` — marked US-048 as passes: true
+- **Learnings for future iterations:**
+  - `ArrangementClipCard` now accepts `assetDurationSec: number | null` for trim bounds — same prop needed if drag-to-extend (US-049) requires knowing source audio length
+  - Expandable card sections: use `{#if expanded}` with `border-t` for clean visual separation
+  - Trim end `null` means "use full source audio" — when incrementing back to max, set to `null` to restore default behavior
+  - `ClipUpdate` supports sending multiple fields at once (e.g., `trimStartSec` + `clipDurationSec`) — the persistence layer accumulates them in the debounce window
 ---
