@@ -17,7 +17,8 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - Schema file must have at least `export {}` to be a valid TypeScript module (Drizzle requires it)
 - Use `.$type<EnumType>()` on text columns for typed enums in Drizzle (keeps DB flexible, TS strict)
 - Drizzle index definitions use a second arg function to `pgTable()` returning an array
-- Exported type aliases (SourceType, Provider, AssetStatus) from schema.ts are reusable across services
+- Exported type aliases (SourceType, Provider, AssetStatus, BranchType) from schema.ts are reusable across services
+- Use `check()` from `drizzle-orm/pg-core` + `sql` from `drizzle-orm` for CHECK constraints in table definitions
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -74,4 +75,41 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - `drizzle-kit generate` creates the first migration as `0000_*.sql` — subsequent stories will generate incremental migrations
   - `drizzle-kit push` applies schema directly to local DB (no migration tracking table needed for dev)
   - Exported type aliases (SourceType, Provider, AssetStatus) make it easy for services to reference allowed values
+---
+
+## 2026-04-24 - US-004
+- Defined `arrangement_clips` and `take_edges` tables in Drizzle schema at `src/lib/server/db/schema.ts`
+- arrangement_clips: id (uuid PK), project_id (FK), owner_id, asset_id (FK), start_time_sec (default 0), trim_start_sec (default 0), trim_end_sec (nullable), clip_duration_sec (not null), gain_db (default 0), muted (default false), soloed (default false), layer_order (default 0), created_at, updated_at, deleted_at
+- take_edges: id (uuid PK), project_id (FK), owner_id, parent_asset_id (FK), child_asset_id (FK), branch_type (typed enum), branch_prompt (nullable), created_at, deleted_at
+- take_edges has CHECK constraint: `parent_asset_id <> child_asset_id`
+- Indexes on arrangement_clips: owner_id, project_id, asset_id
+- Indexes on take_edges: owner_id, project_id, parent_asset_id, child_asset_id
+- Generated migration `drizzle/0001_oval_sue_storm.sql`
+- Pushed migration to local Postgres — both tables created successfully
+- Files changed: src/lib/server/db/schema.ts, drizzle/0001_oval_sue_storm.sql, drizzle/meta/
+- **Learnings for future iterations:**
+  - Import `boolean` and `check` from `drizzle-orm/pg-core`, and `sql` from `drizzle-orm` for CHECK constraints
+  - Drizzle `check()` helper goes in the table's third-arg array alongside indexes
+  - Use `sql` template literal for CHECK constraint expressions referencing table columns
+  - BranchType enum follows same pattern as SourceType/Provider/AssetStatus — const array + $type<>()
+---
+
+## 2026-04-24 - US-005
+- Defined `generation_jobs`, `quota_reservations`, `export_jobs`, and `provider_events` tables in Drizzle schema at `src/lib/server/db/schema.ts`
+- generation_jobs: id (uuid PK), project_id (FK), owner_id, provider, provider_model, job_type (typed enum), status (typed enum), request_json (jsonb not null), response_json, error_json, error_code, quota_reservation_id, resulting_asset_id (FK), idempotency_key, created_at, updated_at
+- quota_reservations: id (uuid PK), owner_id, generation_job_id (FK), idempotency_key, units_reserved, status (typed enum), expires_at, created_at, updated_at
+- export_jobs: id (uuid PK), project_id (FK), owner_id, export_type (typed enum), status (typed enum), snapshot_version (default 1), arrangement_snapshot_json, r2_object_key, error_json, created_at, updated_at
+- provider_events: id (uuid PK), owner_id, generation_job_id (FK), provider, event_type, payload_json, created_at
+- Indexes on generation_jobs: owner_id, project_id, resulting_asset_id, idempotency_key
+- Indexes on quota_reservations: owner_id, idempotency_key
+- Indexes on export_jobs: owner_id, project_id
+- Indexes on provider_events: owner_id, generation_job_id
+- Generated migration `drizzle/0002_aromatic_harrier.sql`
+- Pushed migration to local Postgres — all four tables created successfully
+- Files changed: src/lib/server/db/schema.ts, drizzle/0002_aromatic_harrier.sql, drizzle/meta/
+- **Learnings for future iterations:**
+  - New type enums follow same pattern: `const array as const` + `type Alias = (typeof array)[number]` + `.$type<Alias>()`
+  - New types added: JobType, JobStatus, QuotaStatus, ExportType, ExportStatus — all reusable across services
+  - provider_events table has no updated_at (events are immutable/append-only)
+  - quota_reservations references generation_jobs (FK), and generation_jobs references audio_assets (FK) — careful with table definition order in schema.ts
 ---
