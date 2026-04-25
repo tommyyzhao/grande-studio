@@ -1189,3 +1189,13 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - Pointer Events (`onpointerdown`/`onpointermove`/`onpointerup`) work well for drag interactions — `setPointerCapture` ensures move/up events fire even when pointer leaves the element
   - `fillPercent` maps clipDuration to bar width using a max multiplier (10x trimmed length) — this gives reasonable drag precision without needing separate zoom controls
 ---
+
+## 2026-04-25 - US-050
+- What was implemented: Added gain slider (dB range -24 to +6, 0.5 step), mute toggle button (VolumeX/Volume2 icons), and solo toggle button (Headphones icon) to arrangement clip card. Added visual indicators: muted clips are dimmed (opacity-50), soloed clips are highlighted (bg-primary/10 with ring-primary/30).
+- Files changed: src/lib/components/arrangement-clip-card.svelte
+- **Learnings for future iterations:**
+  - Gain/mute/solo changes flow through existing `onUpdateClip` → `arrangementPersistence.updateClip` → arrangement store + debounced DB → bridge `$effect` → engine — no new wiring needed
+  - The arrangement-engine-bridge at `src/lib/stores/arrangement-engine-bridge.svelte.ts` already handles `gainDb`, `muted`, `soloed` property diffs and calls engine methods
+  - Native `<input type="range">` with `accent-primary` class works well for simple sliders without installing a shadcn Slider component
+  - Use string interpolation in `class=""` attribute for conditional Tailwind classes with opacity modifiers (e.g., `{clip.soloed ? 'bg-primary/10' : 'bg-card'}`) instead of `class:` directives
+---
