@@ -17,6 +17,10 @@
 	let { clip, title, assetDurationSec, onUpdateClip }: Props = $props();
 
 	const STEP = 0.5;
+	/** Minimum clip duration when dragging (0.5s) */
+	const MIN_CLIP_DURATION = 0.5;
+	/** Maximum loop multiplier (e.g., 10x the trimmed length) */
+	const MAX_LOOP_MULTIPLIER = 10;
 
 	// ─── Computed trim bounds ────────────────────────────────────────────
 	/** Effective maximum for trim values (source audio duration) */
@@ -27,6 +31,76 @@
 	const trimmedLength = $derived(effectiveTrimEnd - clip.trimStartSec);
 	/** Whether trim section is expanded */
 	let trimExpanded = $state(false);
+
+	// ─── Drag-to-extend state ────────────────────────────────────────────
+	let isDragging = $state(false);
+	/** Transient clip duration while dragging (before commit) */
+	let dragClipDuration = $state(0);
+	/** The bar container element for coordinate calculations */
+	let barEl: HTMLDivElement | undefined = $state();
+
+	/** Active clip duration — use drag value when dragging, clip value otherwise */
+	const activeClipDuration = $derived(isDragging ? dragClipDuration : clip.clipDurationSec);
+
+	/** How many full + partial loops are needed */
+	const loopCount = $derived.by(() => {
+		if (trimmedLength <= 0) return 1;
+		return activeClipDuration / trimmedLength;
+	});
+
+	/** Whether the clip is currently looping (duration exceeds trimmed length) */
+	const isLooping = $derived(trimmedLength > 0 && activeClipDuration > trimmedLength);
+
+	/** Filled region width as percentage of the bar (maps to max extendable range) */
+	const fillPercent = $derived(
+		Math.min(100, (activeClipDuration / (trimmedLength * MAX_LOOP_MULTIPLIER)) * 100)
+	);
+
+	/** Array of loop segment widths as percentages of total clip duration */
+	const loopSegments = $derived.by(() => {
+		if (trimmedLength <= 0 || activeClipDuration <= 0) return [100];
+		const segments: number[] = [];
+		let remaining = activeClipDuration;
+		while (remaining > 0.001) {
+			const segLen = Math.min(remaining, trimmedLength);
+			segments.push((segLen / activeClipDuration) * 100);
+			remaining -= segLen;
+		}
+		return segments;
+	});
+
+	// ─── Drag handlers ──────────────────────────────────────────────────
+	function onDragStart(e: PointerEvent) {
+		if (!barEl) return;
+		isDragging = true;
+		dragClipDuration = clip.clipDurationSec;
+		(e.target as HTMLElement).setPointerCapture(e.pointerId);
+		e.preventDefault();
+	}
+
+	function onDragMove(e: PointerEvent) {
+		if (!isDragging || !barEl) return;
+		const rect = barEl.getBoundingClientRect();
+		// Maximum duration the bar can represent (for coordinate mapping)
+		const maxExtendDuration = trimmedLength * MAX_LOOP_MULTIPLIER;
+		// Map pointer X position to duration
+		const relX = e.clientX - rect.left;
+		const ratio = Math.max(0, Math.min(1, relX / rect.width));
+		const newDuration = ratio * maxExtendDuration;
+		// Clamp to minimum and snap to 0.25s increments
+		const snapped = Math.round(newDuration * 4) / 4;
+		dragClipDuration = Math.max(MIN_CLIP_DURATION, snapped);
+	}
+
+	function onDragEnd(e: PointerEvent) {
+		if (!isDragging) return;
+		isDragging = false;
+		(e.target as HTMLElement).releasePointerCapture(e.pointerId);
+		// Commit the new duration if changed
+		if (Math.abs(dragClipDuration - clip.clipDurationSec) > 0.01) {
+			onUpdateClip?.({ clipId: clip.clipId, clipDurationSec: dragClipDuration });
+		}
+	}
 
 	// ─── Duration formatting ─────────────────────────────────────────────
 	function formatDuration(sec: number): string {
@@ -154,6 +228,77 @@
 			>
 				<Plus class="size-3.5" />
 			</Button>
+		</div>
+	</div>
+
+	<!-- Waveform bar with drag-to-extend handle -->
+	<div class="border-border border-t px-3 py-2">
+		<div
+			class="relative h-8 select-none overflow-hidden rounded"
+			bind:this={barEl}
+			role="slider"
+			aria-label="Clip duration — drag right edge to extend"
+			aria-valuemin={MIN_CLIP_DURATION}
+			aria-valuemax={trimmedLength * MAX_LOOP_MULTIPLIER}
+			aria-valuenow={activeClipDuration}
+			tabindex={0}
+		>
+			<!-- Background (represents max extendable range) -->
+			<div class="bg-muted absolute inset-0 rounded"></div>
+
+			<!-- Filled region representing activeClipDuration / max range -->
+			<div
+				class="absolute inset-y-0 left-0 flex rounded-l"
+				style="width: {fillPercent}%"
+			>
+				<!-- Loop segments -->
+				{#each loopSegments as widthPct, i}
+					{@const segBg = i === 0 ? 'bg-primary/70' : 'bg-primary/30'}
+					{@const segBorder = i < loopSegments.length - 1 ? 'border-primary/40' : ''}
+					<div
+						class="h-full border-r last:border-r-0 {segBg} {segBorder}"
+						style="width: {widthPct}%; min-width: 1px"
+					>
+						<!-- Fake waveform bars inside each segment -->
+						<div class="flex h-full items-end gap-px px-px">
+							{#each { length: Math.max(3, Math.floor(widthPct / 3)) } as _, j}
+								{@const barHeight = 30 + Math.abs(Math.sin((j + i * 7) * 0.9)) * 70}
+								{@const waveBg = i === 0 ? 'bg-primary-foreground/50' : 'bg-primary-foreground/25'}
+								<div
+									class="flex-1 rounded-t-sm {waveBg}"
+									style="height: {barHeight}%"
+								></div>
+							{/each}
+						</div>
+					</div>
+				{/each}
+			</div>
+
+			<!-- Drag handle on the right edge of the filled region -->
+			<div
+				class="absolute inset-y-0 flex w-4 -translate-x-1/2 cursor-ew-resize items-center justify-center"
+				class:bg-primary={isDragging}
+				class:rounded={isDragging}
+				style="left: {fillPercent}%"
+				onpointerdown={onDragStart}
+				onpointermove={onDragMove}
+				onpointerup={onDragEnd}
+				role="presentation"
+			>
+				<div class="bg-primary h-5 w-0.5 rounded-full" class:bg-primary-foreground={isDragging}></div>
+			</div>
+		</div>
+
+		<!-- Duration label row -->
+		<div class="mt-1 flex items-center justify-between">
+			<span class="text-muted-foreground text-xs tabular-nums">
+				{formatSec(activeClipDuration)}
+			</span>
+			{#if isLooping}
+				<span class="text-muted-foreground text-xs">
+					{loopCount.toFixed(1)}x loop
+				</span>
+			{/if}
 		</div>
 	</div>
 
