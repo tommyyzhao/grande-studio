@@ -85,6 +85,11 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - Client-safe shared types at `src/lib/types.ts`: `AssetStatus`, `JobStatus`, `JobStatusEvent` — importable from client code (mirrors server-side schema enums)
 - SSE consumer store at `src/lib/stores/sse.svelte.ts`: `sseStore` singleton with `connect()`, `disconnect()`, reactive `jobs` Map, `setJobStatus()` for optimistic updates
 - Svelte 5 reactive Map pattern: `jobs = new Map(jobs)` to trigger reactivity — in-place mutation of $state Maps does not trigger updates
+- Live-listening uses KV as cross-worker bridge: `LIVE_KV` binding, `LiveChunkPublisher` writes chunks as base64, `LiveChunkReader` polls for them
+- KV chunk keys: `{jobId}:{chunkIndex}` for data, `{jobId}:meta` for `{ chunkCount, complete }` — 5-minute TTL auto-cleanup
+- SSE audio chunk events: `event: audio-chunk` with `{ jobId, assetId, chunkIndex, data (base64), isFinal }` — separate from `job-status`
+- `KVNamespaceLike` interface at `src/lib/services/live-chunks.ts` follows same abstraction pattern as `R2BucketLike` and `QueueLike`
+- `isAssetLive(assetId)` / `isLiveListening(jobId)` on sseStore for 'Live' indicator in block cards
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -615,4 +620,30 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - `setJobStatus()` is critical for optimistic updates: call after generate endpoint returns to show queued state immediately, before SSE poll catches up
   - Exponential backoff: `retryMs = Math.min(retryMs * 2, MAX_RETRY_MS)` — simple and effective
   - `intentionalClose` flag distinguishes user-initiated disconnect from error-triggered reconnection
+---
+
+## 2026-04-25 - US-026
+- Implemented live-listening audio chunk forwarding from workflow through SSE to client
+- Architecture: Cloudflare KV as bridge between workflow (queue consumer) and SSE endpoint (long-lived HTTP)
+- Created `src/lib/services/live-chunks.ts`: `KVNamespaceLike` interface, `LiveChunkPublisher` (workflow side), `LiveChunkReader` (SSE side), with `createLiveChunkPublisher(kv)` and `createLiveChunkReader(kv)` factories
+- Workflow (generation-workflow.ts): after each decoded audio chunk, publishes to KV as base64 via `deps.liveChunks?.publishChunk()` — wrapped in try/catch, best-effort, never blocks main workflow
+- Calls `deps.liveChunks?.endStream()` after all chunks consumed (also best-effort)
+- KV keys: `{jobId}:{chunkIndex}` for chunk data, `{jobId}:meta` for stream metadata (chunkCount, complete) — 5-minute TTL auto-cleanup
+- Added `LIVE_KV` KV namespace binding to wrangler.jsonc and `KVNamespaceLike` type to app.d.ts Platform.env
+- Added optional `liveChunks?: LiveChunkPublisher` to `WorkflowDeps`; wired in queue-handler via `createLiveChunkPublisher(env.LIVE_KV)`
+- SSE endpoint (`src/routes/api/events/+server.ts`): when DB poll detects a job entering `receiving_audio`, starts chunk polling KV at 500ms intervals; emits named `event: audio-chunk` SSE events with `{ jobId, assetId, chunkIndex, data (base64), isFinal }`; flushes remaining chunks when job leaves `receiving_audio`; gracefully handles missing KV binding (no chunk polling)
+- Client SSE store (`src/lib/stores/sse.svelte.ts`): listens for `audio-chunk` events, accumulates chunks in reactive `liveAudio` Map per jobId; exposes `onAudioChunk()` listener, `getLiveAudio()`, `isLiveListening(jobId)`, `isAssetLive(assetId)` for UI 'Live' indicator
+- Added `AudioChunkEvent` type to `src/lib/types.ts`
+- Files changed: src/lib/services/live-chunks.ts (new), wrangler.jsonc, src/app.d.ts, src/lib/server/workflow/types.ts, src/lib/server/workflow/generation-workflow.ts, src/lib/server/workflow/queue-handler.ts, src/routes/api/events/+server.ts, src/lib/stores/sse.svelte.ts, src/lib/types.ts
+- All 252 tests pass, typecheck passes (0 errors, 0 warnings)
+- **Learnings for future iterations:**
+  - KV is the simplest Cloudflare-native bridge for cross-worker communication (workflow → SSE endpoint) — no shared memory between queue consumers and HTTP handlers
+  - `KVNamespaceLike` follows the same abstraction pattern as `R2BucketLike` and `QueueLike` — minimal interface, no `@cloudflare/workers-types` dependency
+  - KV entries with `expirationTtl: 300` (5 minutes) auto-cleanup without explicit deletion — sufficient for live-listening (chunks only needed during generation)
+  - Chunk polling at 500ms only activates when there are jobs in `receiving_audio` status — no KV reads when idle
+  - `flushRemainingChunks()` does a final KV sweep when a job leaves `receiving_audio` — ensures no chunks are missed even if the workflow finishes faster than the chunk poller
+  - SSE named events: `event: audio-chunk` allows client to use `addEventListener('audio-chunk', handler)` — separate from `job-status` events
+  - `isLiveListening(jobId)` uses a 10-second recency window: considers the job "live" if a chunk arrived in the last 10 seconds and the stream isn't complete
+  - `LiveChunkPublisher` is optional in `WorkflowDeps` — `deps.liveChunks?.publishChunk()` uses optional chaining so live-listening gracefully degrades when KV is unavailable
+  - `uint8ArrayToBase64()` in live-chunks.ts uses character-by-character `String.fromCharCode()` loop — avoids spread argument limits on large arrays
 ---
