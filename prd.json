@@ -255,7 +255,7 @@
         "Typecheck passes"
       ],
       "priority": 14,
-      "passes": false,
+      "passes": true,
       "notes": "MiniMax streaming hex chunks are the final output bytes delivered incrementally, not a separate preview artifact."
     },
     {

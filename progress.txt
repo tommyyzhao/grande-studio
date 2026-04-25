@@ -38,6 +38,11 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 - Payload builders exported separately from adapter for direct unit testing without fetch mocking
 - Cover/re-style source URLs must be from R2, not provider CDNs — `validateR2SourceUrl()` in adapter.ts enforces this
 - Known provider CDN domains blocked: `cdn.minimax.chat`, `cdn.minimaxi.chat`, `fileserviceupload.minimax.chat`
+- `ProviderError` and `ProviderErrorCode` types at `src/lib/providers/types.ts` — all adapter methods normalize errors at the boundary
+- `decodeHexToBytes(hex)` at adapter.ts decodes hex-encoded audio to Uint8Array; strips whitespace, validates even length
+- `normalizeMiniMaxError(error)` at adapter.ts maps MiniMaxApiError → ProviderError: 401/403→auth, 429→rate_limited, 408/502/503/504→timeout, 400/1000+→validation
+- `parseStreamLines(body)` at adapter.ts parses SSE or JSON-line streaming responses into hex audio chunks
+- Adapter methods now throw `ProviderError` (not `MiniMaxApiError`) — MiniMaxApiError is internal only
 
 ## 2026-04-24 18:07 - US-001
 - Scaffolded SvelteKit 2 project with Svelte 5, TypeScript, Tailwind CSS v4, shadcn-svelte (vega/neutral), and Cloudflare Pages adapter
@@ -289,4 +294,26 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - Provider CDN URLs are temporary — only R2 object keys are canonical source references
   - The validation throws synchronously in `buildCoverRestylePayload`, preventing the API call from being made with invalid source URLs
   - `http:` URLs are allowed for local development (localhost R2 emulation)
+---
+
+## 2026-04-24 - US-014
+- Implemented streaming hex response handler and error normalization in MiniMax adapter
+- Added `ProviderErrorCode` type and `ProviderError` class to `src/lib/providers/types.ts`
+- Added `decodeHexToBytes()` — hex-to-Uint8Array decoder with whitespace stripping and validation
+- Added `normalizeMiniMaxError()` — maps MiniMaxApiError/network/abort errors to typed ProviderError with codes: provider_auth_error, provider_rate_limited, provider_timeout, provider_validation_error
+- Added `parseStreamLines()` — async generator that parses SSE-prefixed or plain JSON-line streaming responses into hex audio chunks, handles [DONE] termination
+- Added `streamGenerationAudio` to adapter — streaming mode fetches hex chunks from MiniMax and decodes them; URL fallback fetches audio_url and yields as single chunk
+- Wrapped existing `generateTextToMusic`, `generateInstrumental`, `generateCoverRestyle` with error normalization (now throw ProviderError, not MiniMaxApiError)
+- Updated existing error tests to verify ProviderError normalization
+- Added 39 new tests: hex decoding (6), error normalization (13), stream parsing (8), streaming audio (5+3 URL fallback, 4 error cases)
+- All 104 tests pass, typecheck passes (0 errors, 0 warnings)
+- Files changed: src/lib/providers/types.ts, src/lib/providers/minimax/adapter.ts, src/lib/providers/minimax/adapter.test.ts
+- **Learnings for future iterations:**
+  - `ProviderError` is the public error type at the adapter boundary — `MiniMaxApiError` is internal only
+  - Error normalization mapping: HTTP 401/403→auth, 429→rate_limited, 408/502/503/504→timeout, 400/1000+→validation
+  - `parseStreamLines` handles both SSE format (`data: {...}`) and plain JSON lines
+  - `[DONE]` marker terminates SSE streams; `is_final: true` or `data.status === 2` terminates JSON streams
+  - URL fallback in `streamGenerationAudio` uses `response.arrayBuffer()` and yields a single `isFinal: true` chunk
+  - Mock ReadableStream in tests: use `new ReadableStream({ pull(controller) { ... } })` with TextEncoder
+  - `normalizeMiniMaxError` passes through existing `ProviderError` instances unchanged (idempotent)
 ---
