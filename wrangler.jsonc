@@ -15,6 +15,9 @@
 			"bucket_name": "grande-studio-audio"
 		}
 	],
+	"triggers": {
+		"crons": ["*/5 * * * *"]
+	},
 	"queues": {
 		"producers": [
 			{
