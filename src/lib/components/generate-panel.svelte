@@ -14,6 +14,7 @@
 		quotaLimit?: number;
 		quotaLimitReached?: boolean;
 		resetTimeDisplay?: string;
+		isTemp?: boolean;
 		onGenerated?: (result: {
 			jobId: string;
 			assetId: string;
@@ -30,6 +31,7 @@
 		quotaLimit = 10,
 		quotaLimitReached = false,
 		resetTimeDisplay = '',
+		isTemp = false,
 		onGenerated
 	}: Props = $props();
 
@@ -582,9 +584,15 @@
 
 	{#if quotaLimitReached}
 		<div class="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2">
-			<p class="text-sm font-medium text-red-700 dark:text-red-400">
-				Daily limit reached. Resets at {resetTimeDisplay}
-			</p>
+			{#if isTemp}
+				<p class="text-sm font-medium text-red-700 dark:text-red-400">
+					Sign up to get more generations
+				</p>
+			{:else}
+				<p class="text-sm font-medium text-red-700 dark:text-red-400">
+					Daily limit reached. Resets at {resetTimeDisplay}
+				</p>
+			{/if}
 		</div>
 	{/if}
 

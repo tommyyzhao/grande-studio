@@ -6,7 +6,8 @@ import { eq, isNull, and, desc } from 'drizzle-orm';
 import {
 	createQuotaService,
 	createDrizzleQuotaRepository,
-	DAILY_LIMIT
+	DAILY_LIMIT,
+	TEMP_SESSION_LIMIT
 } from '$lib/services/quota';
 import type { BlockAsset } from '$lib/types';
 
@@ -106,10 +107,15 @@ export const load: PageServerLoad = async ({ locals }) => {
 			errorCode: row.errorCode ?? null
 		}));
 
+		// Check session-based quota for temp user
+		const quotaRepo = createDrizzleQuotaRepository(db);
+		const quotaService = createQuotaService(quotaRepo);
+		const quotaUsed = await quotaService.checkDailyUsage(effectiveUserId);
+
 		return {
 			project,
-			quotaUsed: 0,
-			quotaLimit: DAILY_LIMIT,
+			quotaUsed,
+			quotaLimit: TEMP_SESSION_LIMIT,
 			assets,
 			isTemp: true
 		};

@@ -12,7 +12,8 @@ import {
 import {
 	createQuotaService,
 	createDrizzleQuotaRepository,
-	DAILY_LIMIT
+	DAILY_LIMIT,
+	TEMP_SESSION_LIMIT
 } from '$lib/services/quota';
 import { getEffectiveUserId, isTempSession } from '$lib/server/effective-user';
 
@@ -99,19 +100,27 @@ export const POST: RequestHandler = async ({ request, locals, platform }) => {
 		});
 	}
 
-	// 4. Set up DB and check daily quota (only for authenticated users)
+	// 4. Set up DB and check quota
 	const dbUrl = process.env.DATABASE_URL ?? '';
 	const db = dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
 
-	if (!isTemp) {
+	const limit = isTemp ? TEMP_SESSION_LIMIT : DAILY_LIMIT;
+
+	{
 		const quotaRepo = createDrizzleQuotaRepository(db);
 		const quotaService = createQuotaService(quotaRepo);
 
-		const dailyUsage = await quotaService.checkDailyUsage(userId);
-		if (dailyUsage >= DAILY_LIMIT) {
-			error(429, {
-				message: `Daily generation limit reached (${DAILY_LIMIT}/${DAILY_LIMIT}). Resets at midnight UTC.`
-			});
+		const usage = await quotaService.checkDailyUsage(userId);
+		if (usage >= limit) {
+			if (isTemp) {
+				error(429, {
+					message: `Session generation limit reached (${TEMP_SESSION_LIMIT}/${TEMP_SESSION_LIMIT}). Sign up to get more generations.`
+				});
+			} else {
+				error(429, {
+					message: `Daily generation limit reached (${DAILY_LIMIT}/${DAILY_LIMIT}). Resets at midnight UTC.`
+				});
+			}
 		}
 	}
 
@@ -170,9 +179,9 @@ export const POST: RequestHandler = async ({ request, locals, platform }) => {
 		return { assetId, jobId };
 	});
 
-	// 6. Create quota reservation (only for authenticated users)
+	// 6. Create quota reservation
 	let quotaReservationId: string | undefined;
-	if (!isTemp) {
+	{
 		const quotaRepo = createDrizzleQuotaRepository(db);
 		const quotaService = createQuotaService(quotaRepo);
 		const quotaResult = await quotaService.reserveQuota(userId, result.jobId, idempotencyKey);

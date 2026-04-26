@@ -37,6 +37,7 @@ export function validateQuotaTransition(
 
 export const QUOTA_TTL_MS = 10 * 60 * 1000; // 10 minutes
 export const DAILY_LIMIT = 10;
+export const TEMP_SESSION_LIMIT = 3;
 
 // ─── Repository Interface ──────────────────────────────────────────────────
 

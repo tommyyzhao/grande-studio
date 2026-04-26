@@ -385,12 +385,14 @@
 		</div>
 
 		<div class="flex items-center gap-3">
-			<!-- Daily quota -->
-			{#if data.user}
-				<span class="text-xs {quotaLimitReached ? 'text-destructive font-medium' : 'text-muted-foreground'}">
+			<!-- Quota display -->
+			<span class="text-xs {quotaLimitReached ? 'text-destructive font-medium' : 'text-muted-foreground'}">
+				{#if isTemp}
+					{quotaRemaining} of {data.quotaLimit} free generations
+				{:else}
 					{quotaRemaining} of {data.quotaLimit} remaining today
-				</span>
-			{/if}
+				{/if}
+			</span>
 
 			<!-- Sign out / Sign in -->
 			{#if data.user}
@@ -417,6 +419,7 @@
 				quotaLimit={data.quotaLimit}
 				{quotaLimitReached}
 				{resetTimeDisplay}
+				{isTemp}
 			/>
 		</section>
 
