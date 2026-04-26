@@ -1123,7 +1123,7 @@
         "Typecheck passes"
       ],
       "priority": 61,
-      "passes": false,
+      "passes": true,
       "notes": "Quota reservation TTL is 10 minutes. Cron runs every 5 minutes."
     },
     {

@@ -1359,3 +1359,18 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - `toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })` converts UTC Date to user's local time with timezone abbreviation
   - Quota data already loaded in `+page.server.ts` via `checkDailyUsage` — no new API endpoint needed
 ---
+
+## 2026-04-26 - US-061
+- What was implemented
+  - Cloudflare Cron Trigger configured in `wrangler.jsonc` to run every 5 minutes (`*/5 * * * *`)
+  - Scheduled handler at `src/lib/server/workflow/scheduled-handler.ts` that builds DB connection and quota service, then calls `expireStaleReservations()`
+  - Handler transitions all `reserved` quota rows past their `expires_at` to `expired` status
+  - Does not touch `committed` or `released` reservations (enforced by quota service transition validation)
+- Files changed
+  - `wrangler.jsonc` — Added `triggers.crons` configuration
+  - `src/lib/server/workflow/scheduled-handler.ts` — New scheduled handler module
+- **Learnings for future iterations:**
+  - Cloudflare cron triggers use `triggers.crons` array in wrangler.jsonc — standard cron syntax
+  - Scheduled handler follows same DB construction pattern as `queue-handler.ts` (`buildWorkflowDeps` pattern) but only needs DB + quota (lighter deps)
+  - `@sveltejs/adapter-cloudflare` generates only a `fetch` handler — `queue` and `scheduled` handlers must be wired at the worker entry point separately (see JSDoc in handler files)
+---
