@@ -1427,3 +1427,16 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - The existing `checkDailyUsage()` counts committed reservations since midnight UTC, which works for session-based counting too (temp sessions are ephemeral anyway)
   - Generate panel already had all the plumbing for `quotaLimitReached` — just needed the `isTemp` prop for message differentiation
 ---
+
+## 2026-04-26 01:22 PDT - US-064
+- What was implemented: Persistent sign-up banner for unauthenticated users at top of workspace
+- Files changed: `src/routes/+page.svelte`
+- Banner shows "Sign up to save your project and get more generations" with a "Sign up" CTA button
+- Banner uses `isTemp` derived state to show only for unauthenticated users
+- Banner is not dismissible and placed between the project header and main content
+- Uses existing `goto('/signup')` navigation and `Button` component from shadcn-svelte
+- Styled with `bg-primary/10` background to be visible but non-obtrusive
+- **Learnings for future iterations:**
+  - The `isTemp` derived state in `+page.svelte` is the single source of truth for unauthenticated user detection in UI
+  - Banner placement between header and main content uses `flex flex-col` layout — inserting a new child does not disrupt flex sizing since `main` has `flex-1 min-h-0`
+---
