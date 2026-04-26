@@ -254,8 +254,11 @@
 	let titleDraft = $state('');
 	let savingTitle = $state(false);
 
+	// ─── Temp session flag ──────────────────────────────────────────────
+	let isTemp = $derived(data.isTemp ?? false);
+
 	function startEditingTitle() {
-		if (!data.project) return;
+		if (!data.project || isTemp) return;
 		titleDraft = data.project.title;
 		editingTitle = true;
 	}
@@ -373,8 +376,8 @@
 				<button
 					class="text-foreground text-sm font-semibold hover:underline"
 					onclick={startEditingTitle}
-					disabled={!data.project}
-					title={data.project ? 'Click to rename' : ''}
+					disabled={!data.project || isTemp}
+					title={data.project && !isTemp ? 'Click to rename' : ''}
 				>
 					{data.project?.title ?? 'Untitled Project'}
 				</button>

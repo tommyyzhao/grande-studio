@@ -4,6 +4,7 @@ import type { RequestHandler } from './$types';
 import { createLocalDb, createNeonDb } from '$lib/server/db';
 import { audioAssets } from '$lib/server/db/schema';
 import { withRLS } from '$lib/server/db/rls';
+import { getEffectiveUserId } from '$lib/server/effective-user';
 
 function getDb() {
 	const dbUrl = process.env.DATABASE_URL ?? '';
@@ -38,17 +39,18 @@ function formatToContentType(format: string | null): string {
 /**
  * GET /api/download/[assetId]
  * Serves the audio file from R2 with Content-Disposition: attachment for download.
- * Requires authentication and asset ownership (enforced by RLS).
+ * Requires session and asset ownership (enforced by RLS).
  */
 export const GET: RequestHandler = async ({ params, locals, platform }) => {
-	if (!locals.user) {
-		error(401, { message: 'Authentication required.' });
+	const userId = getEffectiveUserId(locals);
+	if (!userId) {
+		error(401, { message: 'Session required.' });
 	}
 
 	const { assetId } = params;
 	const db = getDb();
 
-	const [asset] = await withRLS(db, locals.user.id, async (tx) => {
+	const [asset] = await withRLS(db, userId, async (tx) => {
 		return tx
 			.select({
 				r2ObjectKey: audioAssets.r2ObjectKey,

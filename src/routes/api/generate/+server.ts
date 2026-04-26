@@ -14,6 +14,7 @@ import {
 	createDrizzleQuotaRepository,
 	DAILY_LIMIT
 } from '$lib/services/quota';
+import { getEffectiveUserId, isTempSession } from '$lib/server/effective-user';
 
 interface GenerateRequestBody {
 	projectId: string;
@@ -39,12 +40,13 @@ function modeToJobType(mode: MusicRequestMode): JobType {
 }
 
 export const POST: RequestHandler = async ({ request, locals, platform }) => {
-	// 1. Validate session
-	if (!locals.user) {
-		error(401, { message: 'Authentication required. Please sign in to generate music.' });
+	// 1. Validate session (authenticated user OR temp session)
+	const userId = getEffectiveUserId(locals);
+	if (!userId) {
+		error(401, { message: 'Session required. Please sign in or refresh the page.' });
 	}
 
-	const userId = locals.user.id;
+	const isTemp = isTempSession(locals);
 
 	// 2. Parse JSON request body
 	let body: GenerateRequestBody;
@@ -97,18 +99,20 @@ export const POST: RequestHandler = async ({ request, locals, platform }) => {
 		});
 	}
 
-	// 4. Set up DB and check daily quota
+	// 4. Set up DB and check daily quota (only for authenticated users)
 	const dbUrl = process.env.DATABASE_URL ?? '';
 	const db = dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
 
-	const quotaRepo = createDrizzleQuotaRepository(db);
-	const quotaService = createQuotaService(quotaRepo);
+	if (!isTemp) {
+		const quotaRepo = createDrizzleQuotaRepository(db);
+		const quotaService = createQuotaService(quotaRepo);
 
-	const dailyUsage = await quotaService.checkDailyUsage(userId);
-	if (dailyUsage >= DAILY_LIMIT) {
-		error(429, {
-			message: `Daily generation limit reached (${DAILY_LIMIT}/${DAILY_LIMIT}). Resets at midnight UTC.`
-		});
+		const dailyUsage = await quotaService.checkDailyUsage(userId);
+		if (dailyUsage >= DAILY_LIMIT) {
+			error(429, {
+				message: `Daily generation limit reached (${DAILY_LIMIT}/${DAILY_LIMIT}). Resets at midnight UTC.`
+			});
+		}
 	}
 
 	// 5. Create asset, job, and quota reservation within RLS transaction
@@ -166,10 +170,16 @@ export const POST: RequestHandler = async ({ request, locals, platform }) => {
 		return { assetId, jobId };
 	});
 
-	// 6. Create quota reservation (outside RLS transaction since quota table has its own owner check)
-	const quotaResult = await quotaService.reserveQuota(userId, result.jobId, idempotencyKey);
-	if (!quotaResult.ok) {
-		error(500, { message: `Failed to reserve quota: ${quotaResult.error}` });
+	// 6. Create quota reservation (only for authenticated users)
+	let quotaReservationId: string | undefined;
+	if (!isTemp) {
+		const quotaRepo = createDrizzleQuotaRepository(db);
+		const quotaService = createQuotaService(quotaRepo);
+		const quotaResult = await quotaService.reserveQuota(userId, result.jobId, idempotencyKey);
+		if (!quotaResult.ok) {
+			error(500, { message: `Failed to reserve quota: ${quotaResult.error}` });
+		}
+		quotaReservationId = quotaResult.reservation.id;
 	}
 
 	// 7. Enqueue job to Cloudflare Queue
@@ -183,7 +193,7 @@ export const POST: RequestHandler = async ({ request, locals, platform }) => {
 			provider: 'minimax',
 			jobType,
 			idempotencyKey,
-			quotaReservationId: quotaResult.reservation.id
+			quotaReservationId: quotaReservationId ?? null
 		});
 	} else {
 		console.warn(

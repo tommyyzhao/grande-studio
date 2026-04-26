@@ -4,6 +4,7 @@ import { createLocalDb, createNeonDb } from '$lib/server/db';
 import { arrangementClips, audioAssets } from '$lib/server/db/schema';
 import { withRLS } from '$lib/server/db/rls';
 import { eq, and, isNull } from 'drizzle-orm';
+import { getEffectiveUserId } from '$lib/server/effective-user';
 
 function getDb() {
 	const dbUrl = process.env.DATABASE_URL ?? '';
@@ -15,8 +16,9 @@ function getDb() {
  * Load all arrangement clips for a project (hydration on project open).
  */
 export const GET: RequestHandler = async ({ url, locals }) => {
-	if (!locals.user) {
-		error(401, { message: 'Authentication required.' });
+	const userId = getEffectiveUserId(locals);
+	if (!userId) {
+		error(401, { message: 'Session required.' });
 	}
 
 	const projectId = url.searchParams.get('projectId');
@@ -26,7 +28,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 
 	const db = getDb();
 
-	const clips = await withRLS(db, locals.user.id, async (tx) => {
+	const clips = await withRLS(db, userId, async (tx) => {
 		return tx
 			.select()
 			.from(arrangementClips)
@@ -44,8 +46,9 @@ export const GET: RequestHandler = async ({ url, locals }) => {
  * Returns: { clip } with the created clip row.
  */
 export const POST: RequestHandler = async ({ request, locals }) => {
-	if (!locals.user) {
-		error(401, { message: 'Authentication required.' });
+	const userId = getEffectiveUserId(locals);
+	if (!userId) {
+		error(401, { message: 'Session required.' });
 	}
 
 	let body: Record<string, unknown>;
@@ -65,7 +68,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 	const db = getDb();
 
-	const clip = await withRLS(db, locals.user.id, async (tx) => {
+	const clip = await withRLS(db, userId, async (tx) => {
 		// Fetch the source asset to get duration
 		const [asset] = await tx
 			.select({ durationSec: audioAssets.durationSec, status: audioAssets.status })
@@ -100,7 +103,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			.insert(arrangementClips)
 			.values({
 				projectId,
-				ownerId: locals.user!.id,
+				ownerId: userId,
 				assetId,
 				startTimeSec: '0',
 				trimStartSec: '0',
@@ -124,8 +127,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
  * Update clip fields (debounced from client). Body: { clipId, ...fields }
  */
 export const PATCH: RequestHandler = async ({ request, locals }) => {
-	if (!locals.user) {
-		error(401, { message: 'Authentication required.' });
+	const userId = getEffectiveUserId(locals);
+	if (!userId) {
+		error(401, { message: 'Session required.' });
 	}
 
 	let body: Record<string, unknown>;
@@ -161,7 +165,7 @@ export const PATCH: RequestHandler = async ({ request, locals }) => {
 
 	const db = getDb();
 
-	await withRLS(db, locals.user.id, async (tx) => {
+	await withRLS(db, userId, async (tx) => {
 		await tx.update(arrangementClips).set(dbUpdate).where(eq(arrangementClips.id, clipId));
 	});
 
@@ -173,8 +177,9 @@ export const PATCH: RequestHandler = async ({ request, locals }) => {
  * Soft-delete an arrangement clip (immediate, not debounced).
  */
 export const DELETE: RequestHandler = async ({ url, locals }) => {
-	if (!locals.user) {
-		error(401, { message: 'Authentication required.' });
+	const userId = getEffectiveUserId(locals);
+	if (!userId) {
+		error(401, { message: 'Session required.' });
 	}
 
 	const clipId = url.searchParams.get('clipId');
@@ -185,7 +190,7 @@ export const DELETE: RequestHandler = async ({ url, locals }) => {
 	const db = getDb();
 	const now = new Date();
 
-	await withRLS(db, locals.user.id, async (tx) => {
+	await withRLS(db, userId, async (tx) => {
 		await tx
 			.update(arrangementClips)
 			.set({ deletedAt: now, updatedAt: now })

@@ -28,6 +28,8 @@ declare global {
 				expiresAt: Date;
 				token: string;
 			} | null;
+			/** Temp session ID for unauthenticated users (from session cookie) */
+			tempSessionId: string | null;
 		}
 		// interface PageData {}
 		// interface PageState {}

@@ -5,6 +5,7 @@ import { createLocalDb, createNeonDb } from '$lib/server/db';
 import { audioAssets } from '$lib/server/db/schema';
 import { withRLS } from '$lib/server/db/rls';
 import { createR2StorageService, buildObjectKey } from '$lib/services/r2-storage';
+import { getEffectiveUserId } from '$lib/server/effective-user';
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
@@ -43,12 +44,11 @@ function resolveExtension(mimeType: string, filename: string): string | null {
 }
 
 export const POST: RequestHandler = async ({ request, locals, platform }) => {
-	// 1. Validate session
-	if (!locals.user) {
-		error(401, { message: 'Authentication required. Please sign in to upload files.' });
+	// 1. Validate session (authenticated user OR temp session)
+	const userId = getEffectiveUserId(locals);
+	if (!userId) {
+		error(401, { message: 'Session required. Please sign in or refresh the page.' });
 	}
-
-	const userId = locals.user.id;
 
 	// 2. Parse multipart form data
 	let formData: FormData;

@@ -17,20 +17,105 @@ function getDb() {
 
 export const load: PageServerLoad = async ({ locals }) => {
 	const user = locals.user;
+	const tempSessionId = locals.tempSessionId;
 
-	if (!user) {
-		// Unauthenticated: return null project (temp workspace handled client-side)
+	// Determine effective user ID (authenticated user or temp session)
+	const effectiveUserId = user?.id ?? tempSessionId;
+
+	if (!effectiveUserId) {
+		// No auth and no temp session — should not happen (hooks.server.ts always sets tempSessionId)
 		return {
 			project: null,
 			quotaUsed: 0,
 			quotaLimit: DAILY_LIMIT,
-			assets: [] as BlockAsset[]
+			assets: [] as BlockAsset[],
+			isTemp: true
 		};
 	}
 
 	const db = getDb();
 
-	// Find existing project or create a default one
+	if (!user) {
+		// ─── Temp user: create or find temp project ────────────────────────
+		// Temp projects are stored in DB (required for FK constraints on assets/jobs)
+		// but are ephemeral — the temp session cookie expires when browser closes.
+		const existingProjects = await withRLS(db, effectiveUserId, async (tx) => {
+			return tx
+				.select()
+				.from(projects)
+				.where(and(eq(projects.ownerId, effectiveUserId), isNull(projects.deletedAt)))
+				.limit(1);
+		});
+
+		let project: { id: string; title: string };
+
+		if (existingProjects.length > 0) {
+			project = { id: existingProjects[0].id, title: existingProjects[0].title };
+		} else {
+			const [created] = await withRLS(db, effectiveUserId, async (tx) => {
+				return tx
+					.insert(projects)
+					.values({
+						ownerId: effectiveUserId,
+						title: 'Untitled Project'
+					})
+					.returning({ id: projects.id, title: projects.title });
+			});
+			project = created;
+		}
+
+		// Fetch existing audio assets for this temp project
+		const assetRows = await withRLS(db, effectiveUserId, async (tx) => {
+			return tx
+				.select({
+					id: audioAssets.id,
+					title: audioAssets.title,
+					prompt: audioAssets.prompt,
+					lyrics: audioAssets.lyrics,
+					durationSec: audioAssets.durationSec,
+					provider: audioAssets.provider,
+					format: audioAssets.format,
+					status: audioAssets.status,
+					createdAt: audioAssets.createdAt,
+					r2ObjectKey: audioAssets.r2ObjectKey,
+					jobId: generationJobs.id,
+					errorCode: generationJobs.errorCode
+				})
+				.from(audioAssets)
+				.leftJoin(generationJobs, eq(generationJobs.resultingAssetId, audioAssets.id))
+				.where(
+					and(
+						eq(audioAssets.projectId, project.id),
+						isNull(audioAssets.deletedAt)
+					)
+				)
+				.orderBy(desc(audioAssets.createdAt));
+		});
+
+		const assets: BlockAsset[] = assetRows.map((row) => ({
+			id: row.id,
+			title: row.title,
+			prompt: row.prompt,
+			lyrics: row.lyrics,
+			durationSec: row.durationSec ? Number(row.durationSec) : null,
+			provider: row.provider,
+			format: row.format,
+			status: row.status,
+			createdAt: row.createdAt.toISOString(),
+			jobId: row.jobId ?? null,
+			errorCode: row.errorCode ?? null
+		}));
+
+		return {
+			project,
+			quotaUsed: 0,
+			quotaLimit: DAILY_LIMIT,
+			assets,
+			isTemp: true
+		};
+	}
+
+	// ─── Authenticated user: find or create project ───────────────────────
 	const existingProjects = await withRLS(db, user.id, async (tx) => {
 		return tx
 			.select()
@@ -108,6 +193,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		project,
 		quotaUsed,
 		quotaLimit: DAILY_LIMIT,
-		assets
+		assets,
+		isTemp: false
 	};
 };

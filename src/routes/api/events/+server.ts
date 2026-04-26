@@ -7,6 +7,7 @@ import { withRLS } from '$lib/server/db/rls';
 import { gte } from 'drizzle-orm';
 import { createLiveChunkReader } from '$lib/services/live-chunks';
 import type { LiveChunkReader } from '$lib/services/live-chunks';
+import { getEffectiveUserId } from '$lib/server/effective-user';
 
 const POLL_INTERVAL_MS = 2000;
 const HEARTBEAT_INTERVAL_MS = 30000;
@@ -37,13 +38,11 @@ interface LiveJobState {
 }
 
 export const GET: RequestHandler = async ({ locals, request, platform }) => {
-	// 1. Validate session (reject unauthenticated)
-	// Note: temp session support will be added in US-062
-	if (!locals.user) {
-		error(401, { message: 'Authentication required. Please sign in to receive updates.' });
+	// 1. Validate session (authenticated user OR temp session)
+	const userId = getEffectiveUserId(locals);
+	if (!userId) {
+		error(401, { message: 'Session required. Please sign in or refresh the page.' });
 	}
-
-	const userId = locals.user.id;
 
 	// 2. Set up DB
 	const dbUrl = process.env.DATABASE_URL ?? '';

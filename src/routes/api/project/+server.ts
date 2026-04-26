@@ -13,10 +13,11 @@ function getDb() {
 /**
  * PATCH /api/project
  * Update project title. Body: { projectId, title }
+ * Requires authentication (temp users cannot rename projects).
  */
 export const PATCH: RequestHandler = async ({ request, locals }) => {
 	if (!locals.user) {
-		error(401, { message: 'Authentication required.' });
+		error(401, { message: 'Authentication required to rename projects.' });
 	}
 
 	let body: { projectId: string; title: string };

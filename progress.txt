@@ -3,6 +3,13 @@ Started: Fri Apr 24 17:37:24 PDT 2026
 ---
 
 ## Codebase Patterns
+- `getEffectiveUserId(locals)` at `src/lib/server/effective-user.ts` returns `locals.user?.id ?? locals.tempSessionId` — use in all API endpoints instead of `locals.user.id` directly
+- `isTempSession(locals)` at `src/lib/server/effective-user.ts` checks if request is from a temp (unauthenticated) session — use to skip quota checks or disable features
+- Temp session cookie `temp_session_id` is set in `hooks.server.ts` for unauthenticated users — session cookie (no maxAge), cleared when browser closes
+- `locals.tempSessionId` set by hooks.server.ts for all unauthenticated requests — always available alongside `locals.user === null`
+- Temp users get a real project in the `projects` table (owner_id = temp session ID) — required for FK constraints on assets/jobs
+- `+page.server.ts` returns `isTemp: boolean` — use in UI to disable auth-only features (title editing, quota display)
+- API endpoints use `getEffectiveUserId(locals)` pattern: returns userId for auth users, tempSessionId for temp users, null if neither
 - Rough mixdown renderer at `src/lib/audio-engine/mixdown.ts`: `renderMixdown(snapshot, onProgress?)` — uses OfflineAudioContext to render all audible clips, returns WAV Blob; `downloadBlob(blob, filename)` triggers browser download
 - WAV encoder at `src/lib/audio-engine/wav-encoder.ts`: `encodeWav(buffer, sampleRate?)` — PCM 16-bit LE, RIFF header, interleaved channels
 - TransportBar requires `projectId: string | null` prop — used for snapshot building during export
@@ -1373,4 +1380,29 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - Cloudflare cron triggers use `triggers.crons` array in wrangler.jsonc — standard cron syntax
   - Scheduled handler follows same DB construction pattern as `queue-handler.ts` (`buildWorkflowDeps` pattern) but only needs DB + quota (lighter deps)
   - `@sveltejs/adapter-cloudflare` generates only a `fetch` handler — `queue` and `scheduled` handlers must be wired at the worker entry point separately (see JSDoc in handler files)
+---
+
+## 2026-04-26 - US-062
+- Implemented temp project workspace for unauthenticated users
+- Files changed:
+  - `src/lib/stores/temp-session.ts` — New: client-side temp session ID utility using sessionStorage
+  - `src/lib/server/effective-user.ts` — New: `getEffectiveUserId()` and `isTempSession()` helpers for API endpoints
+  - `src/app.d.ts` — Added `tempSessionId: string | null` to `App.Locals`
+  - `src/hooks.server.ts` — Generate and set `temp_session_id` session cookie for unauthenticated users; clean up cookie on auth
+  - `src/routes/+page.server.ts` — Create temp project in DB for unauthenticated users; return `isTemp` flag; load assets for temp projects
+  - `src/routes/+page.svelte` — Added `isTemp` derived flag; disabled title editing for temp users
+  - `src/routes/api/generate/+server.ts` — Accept temp session users; skip quota for temp users
+  - `src/routes/api/events/+server.ts` — Accept temp session users via `getEffectiveUserId`
+  - `src/routes/api/upload/+server.ts` — Accept temp session users
+  - `src/routes/api/arrangement/+server.ts` — All 4 handlers (GET/POST/PATCH/DELETE) accept temp session users
+  - `src/routes/api/take-edges/+server.ts` — Both POST and GET accept temp session users
+  - `src/routes/api/download/[assetId]/+server.ts` — Accept temp session users
+  - `src/routes/api/audio/[assetId]/+server.ts` — Accept temp session users
+  - `src/routes/api/project/+server.ts` — Kept auth-only (temp users can't rename projects)
+- **Learnings for future iterations:**
+  - Temp projects need real DB rows because `audio_assets.project_id` has FK constraint to `projects.id` — can't use purely virtual project IDs
+  - Session cookies (no maxAge/expires) are the right ephemeral storage — cleared when browser closes, making data unreachable
+  - `getEffectiveUserId(locals)` centralizes the auth-or-temp pattern — avoids duplicating `locals.user?.id ?? locals.tempSessionId` in every endpoint
+  - Temp users skip quota checking entirely (no daily limit) — US-063 adds session-based rate limiting separately
+  - `hooks.server.ts` cleans up temp session cookie when user authenticates — prevents stale temp data association
 ---

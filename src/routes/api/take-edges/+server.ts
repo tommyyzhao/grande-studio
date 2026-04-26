@@ -4,11 +4,12 @@ import { createLocalDb, createNeonDb } from '$lib/server/db';
 import { takeEdges } from '$lib/server/db/schema';
 import type { BranchType } from '$lib/server/db/schema';
 import { withRLS } from '$lib/server/db/rls';
-import { eq, and, isNull, sql } from 'drizzle-orm';
+import { eq, and, isNull } from 'drizzle-orm';
 import {
 	createTakeEdgeService,
 	createDrizzleTakeEdgeRepository
 } from '$lib/services/take-edges';
+import { getEffectiveUserId } from '$lib/server/effective-user';
 
 function getDb() {
 	const dbUrl = process.env.DATABASE_URL ?? '';
@@ -31,8 +32,9 @@ const VALID_BRANCH_TYPES: BranchType[] = [
  * Body: { projectId, parentAssetId, childAssetId, branchType, branchPrompt? }
  */
 export const POST: RequestHandler = async ({ request, locals }) => {
-	if (!locals.user) {
-		error(401, { message: 'Authentication required.' });
+	const userId = getEffectiveUserId(locals);
+	if (!userId) {
+		error(401, { message: 'Session required.' });
 	}
 
 	let body: Record<string, unknown>;
@@ -66,7 +68,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 	const result = await service.createEdge(
 		projectId as string,
-		locals.user.id,
+		userId,
 		parentAssetId as string,
 		childAssetId as string,
 		branchType as BranchType,
@@ -86,8 +88,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
  * Returns: { counts: Record<parentAssetId, number>, edges: Array<{ parentAssetId, childAssetId, branchType }> }
  */
 export const GET: RequestHandler = async ({ url, locals }) => {
-	if (!locals.user) {
-		error(401, { message: 'Authentication required.' });
+	const userId = getEffectiveUserId(locals);
+	if (!userId) {
+		error(401, { message: 'Session required.' });
 	}
 
 	const projectId = url.searchParams.get('projectId');
@@ -97,7 +100,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 
 	const db = getDb();
 
-	const edgeRows = await withRLS(db, locals.user.id, async (tx) => {
+	const edgeRows = await withRLS(db, userId, async (tx) => {
 		return tx
 			.select({
 				parentAssetId: takeEdges.parentAssetId,
