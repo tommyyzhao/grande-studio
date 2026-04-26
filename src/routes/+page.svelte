@@ -407,6 +407,16 @@
 		</div>
 	</header>
 
+	<!-- ═══ Sign-up Banner (unauthenticated only) ═══ -->
+	{#if isTemp}
+		<div class="bg-primary/10 border-border flex items-center justify-between border-b px-4 py-2">
+			<p class="text-sm">Sign up to save your project and get more generations</p>
+			<Button variant="default" size="sm" onclick={() => goto('/signup')}>
+				Sign up
+			</Button>
+		</div>
+	{/if}
+
 	<!-- ═══ Main Content ═══ -->
 	<main class="flex min-h-0 flex-1 flex-col">
 		<!-- Generate Panel Area -->
