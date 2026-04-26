@@ -1406,3 +1406,24 @@ Started: Fri Apr 24 17:37:24 PDT 2026
   - Temp users skip quota checking entirely (no daily limit) — US-063 adds session-based rate limiting separately
   - `hooks.server.ts` cleans up temp session cookie when user authenticates — prevents stale temp data association
 ---
+
+## 2026-04-26 01:20 PDT - US-063
+- Implemented session-based rate limiting for unauthenticated (temp) users
+- Added `TEMP_SESSION_LIMIT = 3` constant to quota service
+- Generation endpoint now checks quota for ALL users (removed `if (!isTemp)` guard)
+- Temp users use `TEMP_SESSION_LIMIT` (3), authenticated users use `DAILY_LIMIT` (10)
+- Quota reservations now created for temp users too (previously skipped)
+- Page server load now checks `checkDailyUsage(tempSessionId)` for temp users
+- Quota header shows "N of 3 free generations" for temp users vs "N of 10 remaining today" for authenticated
+- Generate panel shows "Sign up to get more generations" when temp user hits limit
+- Files changed:
+  - `src/lib/services/quota.ts` — added TEMP_SESSION_LIMIT constant
+  - `src/routes/api/generate/+server.ts` — removed temp-user bypass on quota check and reservation
+  - `src/routes/+page.server.ts` — check quota for temp users, return TEMP_SESSION_LIMIT
+  - `src/routes/+page.svelte` — show quota for temp users with different wording
+  - `src/lib/components/generate-panel.svelte` — added isTemp prop, conditional limit message
+- **Learnings for future iterations:**
+  - Quota system already supported temp session IDs as `ownerId` — no schema changes needed
+  - The existing `checkDailyUsage()` counts committed reservations since midnight UTC, which works for session-based counting too (temp sessions are ephemeral anyway)
+  - Generate panel already had all the plumbing for `quotaLimitReached` — just needed the `isTemp` prop for message differentiation
+---
