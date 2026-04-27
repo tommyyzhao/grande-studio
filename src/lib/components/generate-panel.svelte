@@ -359,9 +359,10 @@
 				branchType: submittedBranchType
 			});
 
-			prompt = '';
+			// Preserve prompt + instrumental toggle so the user can iterate on
+			// similar generations without retyping. Clear lyrics + branch context
+			// because those typically vary per submission.
 			lyrics = '';
-			instrumental = false;
 			parentAssetId = null;
 			if (panelMode === 'cover_restyle') {
 				clearUploadedFile();
