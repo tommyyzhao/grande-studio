@@ -483,6 +483,35 @@ export function createMiniMaxAdapter(apiKey: string): MusicProvider {
 				throw normalizeMiniMaxError(error);
 			}
 
+			// If MiniMax returned a non-streaming response (text/plain or application/json),
+			// it may contain the full audio as a single JSON payload instead of SSE chunks.
+			const contentType = response.headers?.get?.('content-type') ?? '';
+			if (contentType && !contentType.includes('event-stream') && typeof response.text === 'function') {
+				const text = await response.text();
+				try {
+					const parsed = JSON.parse(text) as { data?: { audio?: string }; base_resp?: { status_code: number; status_msg: string } };
+					if (parsed.base_resp && parsed.base_resp.status_code !== 0) {
+						throw new ProviderError(
+							`MiniMax error: ${parsed.base_resp.status_msg}`,
+							'provider_validation_error',
+							parsed.base_resp.status_code
+						);
+					}
+					const audio = parsed.data?.audio;
+					if (audio) {
+						yield {
+							data: decodeHexToBytes(audio),
+							sequence: 0,
+							isFinal: true
+						};
+						return;
+					}
+				} catch (e) {
+					if (e instanceof ProviderError) throw e;
+					// Not parseable JSON, fall through to stream reading
+				}
+			}
+
 			if (!response.body) {
 				throw new ProviderError(
 					'MiniMax streaming response has no body',
