@@ -24,3 +24,6 @@ vite.config.ts.timestamp-*
 
 # Local R2 storage (dev only)
 .local-r2
+
+# Playwright MCP artifacts (snapshots, console logs)
+.playwright-mcp
