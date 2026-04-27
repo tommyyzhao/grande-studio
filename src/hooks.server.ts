@@ -12,7 +12,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 		event.platform?.env?.DATABASE_URL ?? process.env.DATABASE_URL ?? '';
 	const secret =
 		event.platform?.env?.BETTER_AUTH_SECRET ?? process.env.BETTER_AUTH_SECRET;
-	const auth = getAuth(dbUrl, secret);
+	const baseURL =
+		event.platform?.env?.BETTER_AUTH_URL ?? process.env.BETTER_AUTH_URL;
+	const auth = getAuth(dbUrl, secret, baseURL);
 
 	const session = await auth.api.getSession({
 		headers: event.request.headers

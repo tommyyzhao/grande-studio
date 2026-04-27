@@ -12,7 +12,7 @@ let _cachedDbUrl: string | null = null;
  * On Cloudflare Pages env vars are runtime-only (platform.env), so we
  * cannot use $env/static/private at module scope.
  */
-export function getAuth(dbUrl: string, secret?: string) {
+export function getAuth(dbUrl: string, secret?: string, baseURL?: string) {
 	// Re-create if the DB URL changes (should not happen in production, but safe)
 	if (!_auth || _cachedDbUrl !== dbUrl) {
 		const db = createLocalDb(dbUrl);
@@ -24,7 +24,8 @@ export function getAuth(dbUrl: string, secret?: string) {
 			emailAndPassword: {
 				enabled: true
 			},
-			secret: secret
+			secret: secret,
+			baseURL: baseURL
 		});
 		_cachedDbUrl = dbUrl;
 	}
