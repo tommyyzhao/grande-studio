@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
 	import { authClient } from '$lib/auth-client';
 	import { Button } from '$lib/components/ui/button';
 	import * as Card from '$lib/components/ui/card';
@@ -57,7 +56,11 @@
 			return;
 		}
 
-		goto('/');
+		// Hard navigation so the new BetterAuth cookie is included on the GET /
+		// load. SvelteKit's goto() reuses the SPA context and the layout's
+		// `data.user` was rendering as null on the first paint, leaving "Sign in"
+		// visible to a freshly-signed-up user.
+		window.location.assign('/');
 	}
 </script>
 

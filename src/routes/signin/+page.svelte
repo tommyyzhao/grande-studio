@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
 	import { authClient } from '$lib/auth-client';
 	import { Button } from '$lib/components/ui/button';
 	import * as Card from '$lib/components/ui/card';
@@ -45,7 +44,9 @@
 			return;
 		}
 
-		goto('/');
+		// Hard navigation so the new BetterAuth cookie is included on the GET /
+		// load — see signup/+page.svelte for the same workaround.
+		window.location.assign('/');
 	}
 </script>
 
