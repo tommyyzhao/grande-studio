@@ -9,7 +9,7 @@ Ralph completed all 64 user stories for V1 Minimax Web Studio. This session revi
 ### Architecture: Inngest over Cloudflare Queue (Option C)
 - **Decision**: Replace Cloudflare Queue + Cron with Inngest for background job processing
 - **Reason**: Cloudflare Pages only supports `fetch` handler. Queue consumers and Cron Triggers require Workers mode. Inngest sidesteps this entirely — it calls HTTP endpoints on the Pages app webhook-style, so no separate Worker deployment is needed.
-- **Status**: NOT YET IMPLEMENTED. Planned for next session.
+- **Status**: IMPLEMENTED in 2026-04-27 session. See `memory/episodic/2026-04-27-inngest-migration-and-local-dev.md`.
 - **Impact**: Remove Queue/Cron config from wrangler.jsonc, add Inngest client + serve endpoint, convert generation workflow to Inngest function, convert quota expiry cron to Inngest scheduled function.
 
 ### MiniMax API: Correct Endpoint and Model
