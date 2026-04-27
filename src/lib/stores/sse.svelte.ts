@@ -136,7 +136,11 @@ export function createSSEStore() {
 	}
 
 	function doConnect() {
-		// SSR guard: EventSource is only available in the browser
+		// Browser-only guard: Cloudflare Workers also expose EventSource as a
+		// global, but constructing one with a relative URL in SSR throws
+		// "Cannot open an EventSource ... The URL is invalid". The real check is
+		// whether we're in a browser document context.
+		if (typeof window === 'undefined' || typeof document === 'undefined') return;
 		if (typeof EventSource === 'undefined') return;
 
 		// Clean up any existing connection
