@@ -148,6 +148,22 @@ to validate, smallest blast radius, no platform drift.
 
 ## Branch state
 
-`ralph/v1-minimax-web-studio` is **17 commits** ahead of `49bf053`,
-pushed to `origin`, CI green. Ready for either a PR to `main` (after
-v1.1 architecture is decided) or for next-session continuation.
+`ralph/v1-minimax-web-studio` is **26 commits** ahead of `49bf053` —
+17 of those landed in this session. Pushed to `origin`. Latest CI run
+(`25023729372`) passed in 1m10s. Ready for either a PR to `main`
+(after v1.1 architecture is decided) or for next-session continuation.
+
+## Where to find things next session
+
+- `CLAUDE.md` — bootstrapping doc with run instructions, foot-guns,
+  and a production deploy quickref. **Read first.**
+- `memory/episodic/2026-04-27-v1-prod-deploy.md` — this file.
+- `memory/episodic/2026-04-27-browser-ux-review.md` — UX bug catalog
+  from earlier the same day.
+- `memory/episodic/2026-04-27-inngest-migration-and-local-dev.md` —
+  why Inngest, how the local pipeline runs.
+- `wrangler.jsonc` — bindings + `nodejs_compat` flag.
+- `.github/workflows/deploy.yml` — CI config.
+- `.env` (gitignored) — has R2 S3 keys saved as
+  `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_S3_TOKEN` for the
+  sidecar work.
