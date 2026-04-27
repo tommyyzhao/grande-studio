@@ -1,0 +1,49 @@
+{
+  "skill_name": "shadcn-svelte",
+  "version": "1.0.0",
+  "created_at": "2026-04-24",
+  "distribution": "author-only",
+  "scope": "integration",
+  "description": "Use when adding, configuring, or customising shadcn-svelte (v2+) components in a SvelteKit 2 + Svelte 5 + Tailwind CSS v4 project",
+  "version_targets": {
+    "shadcn-svelte": "2.x",
+    "svelte": "5.x",
+    "sveltekit": "2.x",
+    "tailwindcss": "4.x",
+    "bits-ui": "latest"
+  },
+  "collections": {
+    "references": {
+      "description": "Curated how-to guides for shadcn-svelte integration",
+      "file_count": 6,
+      "files": [
+        "installation-setup.md",
+        "components-reference.md",
+        "theming-tailwind-v4.md",
+        "forms-superforms.md",
+        "svelte5-patterns.md",
+        "common-pitfalls.md"
+      ]
+    }
+  },
+  "dependencies": [
+    "bits-ui",
+    "clsx",
+    "tailwind-merge",
+    "tailwind-variants",
+    "mode-watcher",
+    "svelte-sonner",
+    "sveltekit-superforms",
+    "@tanstack/table-core"
+  ],
+  "sources": [
+    "https://www.shadcn-svelte.com/docs",
+    "https://github.com/huntabyte/shadcn-svelte",
+    "https://superforms.rocks",
+    "https://bits-ui.com"
+  ],
+  "metadata": {
+    "stage": "complete",
+    "last_updated": "2026-04-24"
+  }
+}
