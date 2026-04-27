@@ -15,6 +15,7 @@
 	import { createArrangementPersistence } from '$lib/stores/arrangement-persistence.svelte';
 	import { sseStore } from '$lib/stores/sse.svelte';
 	import type { BlockAsset } from '$lib/types';
+	import { truncateAtWord } from '$lib/utils';
 
 	let { data } = $props();
 
@@ -114,7 +115,7 @@
 	}) {
 		const newBlock: BlockAsset = {
 			id: result.assetId,
-			title: result.prompt.slice(0, 50) || 'Untitled',
+			title: truncateAtWord(result.prompt, 50) || 'Untitled',
 			prompt: result.prompt,
 			lyrics: result.lyrics,
 			durationSec: null,
@@ -372,15 +373,18 @@
 					disabled={savingTitle}
 					autofocus
 				/>
-			{:else}
+			{:else if data.project && !isTemp}
 				<button
 					class="text-foreground text-sm font-semibold hover:underline"
 					onclick={startEditingTitle}
-					disabled={!data.project || isTemp}
-					title={data.project && !isTemp ? 'Click to rename' : ''}
+					title="Click to rename"
 				>
-					{data.project?.title ?? 'Untitled Project'}
+					{data.project.title}
 				</button>
+			{:else}
+				<span class="text-foreground text-sm font-semibold">
+					{data.project?.title ?? 'Untitled Project'}
+				</span>
 			{/if}
 		</div>
 
@@ -388,7 +392,7 @@
 			<!-- Quota display -->
 			<span class="text-xs {quotaLimitReached ? 'text-destructive font-medium' : 'text-muted-foreground'}">
 				{#if isTemp}
-					{quotaRemaining} of {data.quotaLimit} free generations
+					{quotaRemaining} free {quotaRemaining === 1 ? 'generation' : 'generations'} remaining
 				{:else}
 					{quotaRemaining} of {data.quotaLimit} remaining today
 				{/if}

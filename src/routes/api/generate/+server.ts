@@ -18,6 +18,7 @@ import {
 import { getEffectiveUserId, isTempSession } from '$lib/server/effective-user';
 import { getEnv } from '$lib/server/env';
 import { inngest } from '$lib/server/inngest/client';
+import { truncateAtWord } from '$lib/utils';
 
 interface GenerateRequestBody {
 	projectId: string;
@@ -141,7 +142,7 @@ export const POST: RequestHandler = async (event) => {
 				sourceType: 'generated',
 				provider: 'minimax',
 				providerModel: 'music-01',
-				title: prompt.slice(0, 80) || 'Untitled',
+				title: truncateAtWord(prompt, 80) || 'Untitled',
 				prompt,
 				lyrics: lyrics ?? null,
 				structureTagsJson: structureTags?.length ? structureTags : null,
