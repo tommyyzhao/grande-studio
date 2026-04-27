@@ -10,104 +10,104 @@ ALTER TABLE "provider_events" ENABLE ROW LEVEL SECURITY;
 
 -- ─── projects ───────────────────────────────────────────────────────────────
 CREATE POLICY "projects_select" ON "projects"
-  FOR SELECT USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR SELECT USING (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "projects_insert" ON "projects"
-  FOR INSERT WITH CHECK (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR INSERT WITH CHECK (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "projects_update" ON "projects"
-  FOR UPDATE USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR UPDATE USING (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "projects_delete" ON "projects"
-  FOR DELETE USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR DELETE USING (owner_id = current_setting('app.user_id', true)::text);
 
 -- ─── audio_assets ──────────────────────────────────────────────────────────
 CREATE POLICY "audio_assets_select" ON "audio_assets"
-  FOR SELECT USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR SELECT USING (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "audio_assets_insert" ON "audio_assets"
-  FOR INSERT WITH CHECK (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR INSERT WITH CHECK (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "audio_assets_update" ON "audio_assets"
-  FOR UPDATE USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR UPDATE USING (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "audio_assets_delete" ON "audio_assets"
-  FOR DELETE USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR DELETE USING (owner_id = current_setting('app.user_id', true)::text);
 
 -- ─── arrangement_clips ─────────────────────────────────────────────────────
 CREATE POLICY "arrangement_clips_select" ON "arrangement_clips"
-  FOR SELECT USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR SELECT USING (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "arrangement_clips_insert" ON "arrangement_clips"
-  FOR INSERT WITH CHECK (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR INSERT WITH CHECK (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "arrangement_clips_update" ON "arrangement_clips"
-  FOR UPDATE USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR UPDATE USING (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "arrangement_clips_delete" ON "arrangement_clips"
-  FOR DELETE USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR DELETE USING (owner_id = current_setting('app.user_id', true)::text);
 
 -- ─── take_edges ────────────────────────────────────────────────────────────
 CREATE POLICY "take_edges_select" ON "take_edges"
-  FOR SELECT USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR SELECT USING (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "take_edges_insert" ON "take_edges"
-  FOR INSERT WITH CHECK (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR INSERT WITH CHECK (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "take_edges_update" ON "take_edges"
-  FOR UPDATE USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR UPDATE USING (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "take_edges_delete" ON "take_edges"
-  FOR DELETE USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR DELETE USING (owner_id = current_setting('app.user_id', true)::text);
 
 -- ─── generation_jobs ───────────────────────────────────────────────────────
 CREATE POLICY "generation_jobs_select" ON "generation_jobs"
-  FOR SELECT USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR SELECT USING (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "generation_jobs_insert" ON "generation_jobs"
-  FOR INSERT WITH CHECK (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR INSERT WITH CHECK (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "generation_jobs_update" ON "generation_jobs"
-  FOR UPDATE USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR UPDATE USING (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "generation_jobs_delete" ON "generation_jobs"
-  FOR DELETE USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR DELETE USING (owner_id = current_setting('app.user_id', true)::text);
 
 -- ─── quota_reservations ────────────────────────────────────────────────────
 CREATE POLICY "quota_reservations_select" ON "quota_reservations"
-  FOR SELECT USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR SELECT USING (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "quota_reservations_insert" ON "quota_reservations"
-  FOR INSERT WITH CHECK (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR INSERT WITH CHECK (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "quota_reservations_update" ON "quota_reservations"
-  FOR UPDATE USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR UPDATE USING (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "quota_reservations_delete" ON "quota_reservations"
-  FOR DELETE USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR DELETE USING (owner_id = current_setting('app.user_id', true)::text);
 
 -- ─── export_jobs ───────────────────────────────────────────────────────────
 CREATE POLICY "export_jobs_select" ON "export_jobs"
-  FOR SELECT USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR SELECT USING (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "export_jobs_insert" ON "export_jobs"
-  FOR INSERT WITH CHECK (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR INSERT WITH CHECK (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "export_jobs_update" ON "export_jobs"
-  FOR UPDATE USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR UPDATE USING (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "export_jobs_delete" ON "export_jobs"
-  FOR DELETE USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR DELETE USING (owner_id = current_setting('app.user_id', true)::text);
 
 -- ─── provider_events ───────────────────────────────────────────────────────
 CREATE POLICY "provider_events_select" ON "provider_events"
-  FOR SELECT USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR SELECT USING (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "provider_events_insert" ON "provider_events"
-  FOR INSERT WITH CHECK (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR INSERT WITH CHECK (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "provider_events_update" ON "provider_events"
-  FOR UPDATE USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR UPDATE USING (owner_id = current_setting('app.user_id', true)::text);
 
 CREATE POLICY "provider_events_delete" ON "provider_events"
-  FOR DELETE USING (owner_id = current_setting('app.user_id', true)::uuid);
+  FOR DELETE USING (owner_id = current_setting('app.user_id', true)::text);

@@ -16,7 +16,7 @@ import { sql } from 'drizzle-orm';
 // ─── projects ───────────────────────────────────────────────────────────────
 export const projects = pgTable('projects', {
 	id: uuid('id').primaryKey().defaultRandom(),
-	ownerId: uuid('owner_id').notNull(),
+	ownerId: text('owner_id').notNull(),
 	title: text('title').notNull(),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -49,7 +49,7 @@ export const audioAssets = pgTable(
 		projectId: uuid('project_id')
 			.notNull()
 			.references(() => projects.id),
-		ownerId: uuid('owner_id').notNull(),
+		ownerId: text('owner_id').notNull(),
 		sourceType: text('source_type').notNull().$type<SourceType>(),
 		provider: text('provider').notNull().$type<Provider>(),
 		providerModel: text('provider_model'),
@@ -84,7 +84,7 @@ export const arrangementClips = pgTable(
 		projectId: uuid('project_id')
 			.notNull()
 			.references(() => projects.id),
-		ownerId: uuid('owner_id').notNull(),
+		ownerId: text('owner_id').notNull(),
 		assetId: uuid('asset_id')
 			.notNull()
 			.references(() => audioAssets.id),
@@ -130,7 +130,7 @@ export const generationJobs = pgTable(
 		projectId: uuid('project_id')
 			.notNull()
 			.references(() => projects.id),
-		ownerId: uuid('owner_id').notNull(),
+		ownerId: text('owner_id').notNull(),
 		provider: text('provider').notNull().$type<Provider>(),
 		providerModel: text('provider_model'),
 		jobType: text('job_type').notNull().$type<JobType>(),
@@ -161,7 +161,7 @@ export const quotaReservations = pgTable(
 	'quota_reservations',
 	{
 		id: uuid('id').primaryKey().defaultRandom(),
-		ownerId: uuid('owner_id').notNull(),
+		ownerId: text('owner_id').notNull(),
 		generationJobId: uuid('generation_job_id').references(() => generationJobs.id),
 		idempotencyKey: text('idempotency_key').notNull(),
 		unitsReserved: integer('units_reserved').notNull(),
@@ -190,7 +190,7 @@ export const exportJobs = pgTable(
 		projectId: uuid('project_id')
 			.notNull()
 			.references(() => projects.id),
-		ownerId: uuid('owner_id').notNull(),
+		ownerId: text('owner_id').notNull(),
 		exportType: text('export_type').notNull().$type<ExportType>(),
 		status: text('status').notNull().$type<ExportStatus>().default('created'),
 		snapshotVersion: integer('snapshot_version').notNull().default(1),
@@ -211,7 +211,7 @@ export const providerEvents = pgTable(
 	'provider_events',
 	{
 		id: uuid('id').primaryKey().defaultRandom(),
-		ownerId: uuid('owner_id').notNull(),
+		ownerId: text('owner_id').notNull(),
 		generationJobId: uuid('generation_job_id').references(() => generationJobs.id),
 		provider: text('provider').notNull().$type<Provider>(),
 		eventType: text('event_type').notNull(),
@@ -243,7 +243,7 @@ export const takeEdges = pgTable(
 		projectId: uuid('project_id')
 			.notNull()
 			.references(() => projects.id),
-		ownerId: uuid('owner_id').notNull(),
+		ownerId: text('owner_id').notNull(),
 		parentAssetId: uuid('parent_asset_id')
 			.notNull()
 			.references(() => audioAssets.id),
