@@ -1,21 +1,17 @@
-import { env as privateEnv } from '$env/dynamic/private';
 import { inngest } from './client';
+import { getInngestEnv } from './context';
 import { processGenerationMessage } from '$lib/server/workflow/queue-handler';
 import { handleScheduled } from '$lib/server/workflow/scheduled-handler';
-import { createLocalR2Bucket } from '$lib/server/local-r2';
 import type { GenerationQueueMessage } from '$lib/server/workflow/types';
 import type { WorkflowEnv } from '$lib/server/workflow/types';
 
-/** Build WorkflowEnv from SvelteKit's private env vars + local R2 for dev. */
+/** Read WorkflowEnv from request-scoped AsyncLocalStorage set by /api/inngest. */
 function getWorkflowEnv(): WorkflowEnv {
-	return {
-		DATABASE_URL: privateEnv.DATABASE_URL,
-		MINIMAX_API_KEY: privateEnv.MINIMAX_API_KEY,
-		R2_SIGNING_SECRET: privateEnv.R2_SIGNING_SECRET ?? '',
-		BETTER_AUTH_URL: privateEnv.BETTER_AUTH_URL ?? 'http://localhost:5183',
-		AUDIO_BUCKET: createLocalR2Bucket(),
-		LIVE_KV: undefined
-	};
+	const env = getInngestEnv();
+	if (!env) {
+		throw new Error('Inngest env context not set — did you forget to wrap the handler?');
+	}
+	return env;
 }
 
 /**
