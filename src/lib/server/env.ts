@@ -21,6 +21,11 @@ export interface AppEnv {
  */
 export function getEnv(event: RequestEvent): AppEnv {
 	const p = (event.platform?.env ?? {}) as Record<string, unknown>;
+	// In local dev, the Cloudflare adapter injects an empty Miniflare R2 binding
+	// for AUDIO_BUCKET. The Inngest workflow writes via createLocalR2Bucket() to
+	// the filesystem, so reads must do the same — otherwise we'd hit the empty
+	// Miniflare binding and 404. INNGEST_DEV=1 is set when running the local stack.
+	const isDev = process.env.INNGEST_DEV === '1';
 	return {
 		DATABASE_URL: (p.DATABASE_URL as string) ?? process.env.DATABASE_URL ?? '',
 		MINIMAX_API_KEY: (p.MINIMAX_API_KEY as string) ?? process.env.MINIMAX_API_KEY ?? '',
@@ -33,7 +38,9 @@ export function getEnv(event: RequestEvent): AppEnv {
 		R2_SIGNING_SECRET:
 			(p.R2_SIGNING_SECRET as string) ?? process.env.R2_SIGNING_SECRET ?? '',
 		R2_BUCKET_NAME: (p.R2_BUCKET_NAME as string) ?? process.env.R2_BUCKET_NAME ?? '',
-		AUDIO_BUCKET: (p.AUDIO_BUCKET as R2BucketLike) ?? createLocalR2Bucket(),
+		AUDIO_BUCKET: isDev
+			? createLocalR2Bucket()
+			: ((p.AUDIO_BUCKET as R2BucketLike) ?? createLocalR2Bucket()),
 		LIVE_KV: p.LIVE_KV as KVNamespaceLike | undefined
 	};
 }
