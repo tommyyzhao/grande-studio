@@ -58,7 +58,7 @@ export const quotaExpiryFunction = inngest.createFunction(
 	},
 	async ({ step }) => {
 		await step.run('expire-reservations', async () => {
-			await handleScheduled();
+			await handleScheduled(getWorkflowEnv());
 		});
 	}
 );
