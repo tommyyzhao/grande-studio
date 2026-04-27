@@ -80,6 +80,53 @@ non-obvious findings.** This is the handoff channel between sessions.
 - **Generation workflow is a single function invocation, not stepped.**
   MiniMax streaming exceeds Inngest's per-step ~10s timeout. Function-level
   retries (3) still apply. Quota expiry is fast and uses `step.run`.
+- **Cloudflare Workers reject I/O across requests.** Never cache a DB
+  connection / fetch / stream / auth instance at module scope — Workers
+  throw "Cannot perform I/O on behalf of a different request" the moment
+  a second request reuses it. Build per-request (e.g. `getAuth(...)` returns
+  a fresh BetterAuth each call).
+- **`node-postgres` does not run in Workers** (no TCP sockets). Anything
+  hitting Postgres in production must use `@neondatabase/serverless` —
+  pattern: `dbUrl.includes('neon.tech') ? createNeonDb : createLocalDb`.
+- **Inngest function bodies don't see `platform.env`.** Bindings (R2/KV)
+  must be plumbed in via `inngestEnvContext.run(env, …)` from
+  `src/routes/api/inngest/+server.ts`. Functions read with `getInngestEnv()`.
+  Requires `nodejs_compat` for `AsyncLocalStorage`.
+- **Cloudflare Workers expose `EventSource` globally.** A plain
+  `typeof EventSource === 'undefined'` SSR guard fires only in Node, not in
+  the Workers runtime. Use `typeof window === 'undefined'` for the real
+  browser-only check.
+- **Cloudflare Pages adapter injects an empty Miniflare R2 binding in
+  dev** that shadows the local-filesystem fallback. `getEnv()` forces
+  `createLocalR2Bucket()` when `INNGEST_DEV=1` so writes (Inngest workflow)
+  and reads (`/api/audio/serve`) hit the same store.
+- **Inngest cloud needs a one-time sync per deploy** (`curl -X PUT
+  https://<host>/api/inngest`). Without it the dashboard never learns
+  the function manifest and events sit unprocessed.
+
+## Production deploy quickref
+
+`wrangler.jsonc` is the source of truth for bindings (`AUDIO_BUCKET` →
+R2 bucket `grande-studio-audio`, `LIVE_KV` → KV namespace
+`42abaef07d9e4490ac8368639128e3d0`) and `nodejs_compat`. Secrets live on
+the Pages project (set via `wrangler pages secret put`):
+
+```
+DATABASE_URL          MINIMAX_API_KEY       BETTER_AUTH_SECRET
+BETTER_AUTH_URL       R2_BUCKET_NAME        R2_SIGNING_SECRET
+INNGEST_EVENT_KEY     INNGEST_SIGNING_KEY
+```
+
+Deploy:
+
+```bash
+npm run build
+npx wrangler pages deploy .svelte-kit/cloudflare --project-name grande-studio --branch main --commit-dirty=true
+curl -X PUT https://grande-studio.pages.dev/api/inngest   # sync Inngest manifest
+```
+
+Live at https://grande-studio.pages.dev. Neon prod DB:
+`empty-wind-58284971` in org `tommy@meshi.io` (region `aws-us-west-2`).
 
 ## Layout
 
