@@ -24,6 +24,7 @@
 		"@types/pg": "^8.20.0",
 		"bits-ui": "^2.18.0",
 		"clsx": "^2.1.1",
+		"dotenv": "^17.4.2",
 		"drizzle-kit": "^0.31.10",
 		"lucide-svelte": "^1.0.1",
 		"shadcn-svelte": "^1.2.7",
@@ -41,6 +42,7 @@
 		"@neondatabase/serverless": "^1.1.0",
 		"better-auth": "^1.6.9",
 		"drizzle-orm": "^0.45.2",
+		"inngest": "^4.2.4",
 		"pg": "^8.20.0",
 		"wavesurfer.js": "^7.12.6"
 	}

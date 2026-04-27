@@ -1,12 +1,7 @@
 import type { RequestEvent } from '@sveltejs/kit';
 import type { R2BucketLike } from '$lib/services/r2-storage';
 import type { KVNamespaceLike } from '$lib/services/live-chunks';
-
-/** Minimal Cloudflare Queue producer interface */
-interface QueueLike {
-	send(message: unknown): Promise<void>;
-	sendBatch(messages: { body: unknown }[]): Promise<void>;
-}
+import { createLocalR2Bucket } from '$lib/server/local-r2';
 
 export interface AppEnv {
 	DATABASE_URL: string;
@@ -15,10 +10,9 @@ export interface AppEnv {
 	BETTER_AUTH_URL: string;
 	R2_SIGNING_SECRET: string;
 	R2_BUCKET_NAME: string;
-	// Cloudflare bindings (only available on Cloudflare)
-	AUDIO_BUCKET?: R2BucketLike;
+	// Cloudflare R2 binding on production, local filesystem in dev
+	AUDIO_BUCKET: R2BucketLike;
 	LIVE_KV?: KVNamespaceLike;
-	GENERATION_QUEUE?: QueueLike;
 }
 
 /**
@@ -39,9 +33,8 @@ export function getEnv(event: RequestEvent): AppEnv {
 		R2_SIGNING_SECRET:
 			(p.R2_SIGNING_SECRET as string) ?? process.env.R2_SIGNING_SECRET ?? '',
 		R2_BUCKET_NAME: (p.R2_BUCKET_NAME as string) ?? process.env.R2_BUCKET_NAME ?? '',
-		AUDIO_BUCKET: p.AUDIO_BUCKET as R2BucketLike | undefined,
-		LIVE_KV: p.LIVE_KV as KVNamespaceLike | undefined,
-		GENERATION_QUEUE: p.GENERATION_QUEUE as QueueLike | undefined
+		AUDIO_BUCKET: (p.AUDIO_BUCKET as R2BucketLike) ?? createLocalR2Bucket(),
+		LIVE_KV: p.LIVE_KV as KVNamespaceLike | undefined
 	};
 }
 

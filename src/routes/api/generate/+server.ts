@@ -17,6 +17,7 @@ import {
 } from '$lib/services/quota';
 import { getEffectiveUserId, isTempSession } from '$lib/server/effective-user';
 import { getEnv } from '$lib/server/env';
+import { inngest } from '$lib/server/inngest/client';
 
 interface GenerateRequestBody {
 	projectId: string;
@@ -194,10 +195,10 @@ export const POST: RequestHandler = async (event) => {
 		quotaReservationId = quotaResult.reservation.id;
 	}
 
-	// 7. Enqueue job to Cloudflare Queue
-	const queue = env.GENERATION_QUEUE;
-	if (queue) {
-		await queue.send({
+	// 7. Send Inngest event to trigger generation workflow
+	await inngest.send({
+		name: 'generation/requested',
+		data: {
 			jobId: result.jobId,
 			assetId: result.assetId,
 			projectId,
@@ -206,13 +207,8 @@ export const POST: RequestHandler = async (event) => {
 			jobType,
 			idempotencyKey,
 			quotaReservationId: quotaReservationId ?? null
-		});
-	} else {
-		console.warn(
-			'GENERATION_QUEUE binding not available — job created but not enqueued. Job ID:',
-			result.jobId
-		);
-	}
+		}
+	});
 
 	// 8. Return job and asset IDs
 	return json(

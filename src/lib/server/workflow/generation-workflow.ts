@@ -315,6 +315,7 @@ export async function runGenerationWorkflow(
 			case 'instrumental':
 				generationInput = {
 					prompt: requestPayload.prompt,
+					instrumental: true,
 					structureTags: requestPayload.structureTags
 				};
 				break;

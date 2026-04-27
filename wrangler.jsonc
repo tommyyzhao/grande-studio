@@ -14,23 +14,5 @@
 			"binding": "AUDIO_BUCKET",
 			"bucket_name": "grande-studio-audio"
 		}
-	],
-	"triggers": {
-		"crons": ["*/5 * * * *"]
-	},
-	"queues": {
-		"producers": [
-			{
-				"binding": "GENERATION_QUEUE",
-				"queue": "grande-studio-generation"
-			}
-		],
-		"consumers": [
-			{
-				"queue": "grande-studio-generation",
-				"max_batch_size": 1,
-				"max_retries": 3
-			}
-		]
-	}
+	]
 }

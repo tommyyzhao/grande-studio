@@ -3,12 +3,6 @@
 import type { R2BucketLike } from '$lib/services/r2-storage';
 import type { KVNamespaceLike } from '$lib/services/live-chunks';
 
-/** Minimal Cloudflare Queue producer interface (avoids @cloudflare/workers-types dependency) */
-interface QueueLike {
-	send(message: unknown): Promise<void>;
-	sendBatch(messages: { body: unknown }[]): Promise<void>;
-}
-
 declare global {
 	namespace App {
 		// interface Error {}
@@ -43,7 +37,6 @@ declare global {
 				R2_BUCKET_NAME?: string;
 				AUDIO_BUCKET?: R2BucketLike;
 				LIVE_KV?: KVNamespaceLike;
-				GENERATION_QUEUE?: QueueLike;
 			};
 			context?: {
 				waitUntil(promise: Promise<unknown>): void;
