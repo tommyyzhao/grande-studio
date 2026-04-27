@@ -4,18 +4,16 @@ import { createLocalDb, createNeonDb } from '$lib/server/db';
 import { projects } from '$lib/server/db/schema';
 import { withRLS } from '$lib/server/db/rls';
 import { eq } from 'drizzle-orm';
-
-function getDb() {
-	const dbUrl = process.env.DATABASE_URL ?? '';
-	return dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
-}
+import { getEnv } from '$lib/server/env';
 
 /**
  * PATCH /api/project
  * Update project title. Body: { projectId, title }
  * Requires authentication (temp users cannot rename projects).
  */
-export const PATCH: RequestHandler = async ({ request, locals }) => {
+export const PATCH: RequestHandler = async (event) => {
+	const { request, locals } = event;
+	const env = getEnv(event);
 	if (!locals.user) {
 		error(401, { message: 'Authentication required to rename projects.' });
 	}
@@ -37,7 +35,8 @@ export const PATCH: RequestHandler = async ({ request, locals }) => {
 		error(400, { message: 'Title must be a non-empty string.' });
 	}
 
-	const db = getDb();
+	const dbUrl = env.DATABASE_URL;
+	const db = dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
 
 	const [updated] = await withRLS(db, locals.user.id, async (tx) => {
 		return tx

@@ -10,11 +10,7 @@ import {
 	createDrizzleTakeEdgeRepository
 } from '$lib/services/take-edges';
 import { getEffectiveUserId } from '$lib/server/effective-user';
-
-function getDb() {
-	const dbUrl = process.env.DATABASE_URL ?? '';
-	return dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
-}
+import { getEnv } from '$lib/server/env';
 
 const VALID_BRANCH_TYPES: BranchType[] = [
 	'prompt_variation',
@@ -31,7 +27,9 @@ const VALID_BRANCH_TYPES: BranchType[] = [
  * Create a take edge linking parent asset to child asset.
  * Body: { projectId, parentAssetId, childAssetId, branchType, branchPrompt? }
  */
-export const POST: RequestHandler = async ({ request, locals }) => {
+export const POST: RequestHandler = async (event) => {
+	const { request, locals } = event;
+	const env = getEnv(event);
 	const userId = getEffectiveUserId(locals);
 	if (!userId) {
 		error(401, { message: 'Session required.' });
@@ -62,7 +60,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		error(400, { message: 'branchPrompt must be a string if provided' });
 	}
 
-	const db = getDb();
+	const dbUrl = env.DATABASE_URL;
+	const db = dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
 	const repo = createDrizzleTakeEdgeRepository(db);
 	const service = createTakeEdgeService(repo);
 
@@ -87,7 +86,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
  * Get variation counts and edge data for a project.
  * Returns: { counts: Record<parentAssetId, number>, edges: Array<{ parentAssetId, childAssetId, branchType }> }
  */
-export const GET: RequestHandler = async ({ url, locals }) => {
+export const GET: RequestHandler = async (event) => {
+	const { url, locals } = event;
+	const env = getEnv(event);
 	const userId = getEffectiveUserId(locals);
 	if (!userId) {
 		error(401, { message: 'Session required.' });
@@ -98,7 +99,8 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 		error(400, { message: 'Missing required query parameter: projectId' });
 	}
 
-	const db = getDb();
+	const dbUrl = env.DATABASE_URL;
+	const db = dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
 
 	const edgeRows = await withRLS(db, userId, async (tx) => {
 		return tx

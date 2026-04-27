@@ -90,9 +90,12 @@ export interface MusicProvider {
 	/** Submit a cover/re-style generation request */
 	generateCoverRestyle(input: CoverRestyleInput): Promise<ProviderGenerationHandle>;
 
-	/** Stream audio chunks from an in-progress generation (optional) */
+	/** Stream audio chunks directly from a generation request (optional).
+	 * Streaming happens from the initial POST response body, not a separate endpoint.
+	 * The input is the original generation input; handle is optional context. */
 	streamGenerationAudio?(
-		handle: ProviderGenerationHandle
+		input: TextToMusicInput | InstrumentalGenerationInput | CoverRestyleInput,
+		handle?: ProviderGenerationHandle
 	): AsyncGenerator<ProviderAudioChunk, void, undefined>;
 
 	/** Pre-process cover source audio before submission (optional) */

@@ -5,17 +5,15 @@ import { arrangementClips, audioAssets } from '$lib/server/db/schema';
 import { withRLS } from '$lib/server/db/rls';
 import { eq, and, isNull } from 'drizzle-orm';
 import { getEffectiveUserId } from '$lib/server/effective-user';
-
-function getDb() {
-	const dbUrl = process.env.DATABASE_URL ?? '';
-	return dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
-}
+import { getEnv } from '$lib/server/env';
 
 /**
  * GET /api/arrangement?projectId=...
  * Load all arrangement clips for a project (hydration on project open).
  */
-export const GET: RequestHandler = async ({ url, locals }) => {
+export const GET: RequestHandler = async (event) => {
+	const { url, locals } = event;
+	const env = getEnv(event);
 	const userId = getEffectiveUserId(locals);
 	if (!userId) {
 		error(401, { message: 'Session required.' });
@@ -26,7 +24,8 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 		error(400, { message: 'Missing required query parameter: projectId' });
 	}
 
-	const db = getDb();
+	const dbUrl = env.DATABASE_URL;
+	const db = dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
 
 	const clips = await withRLS(db, userId, async (tx) => {
 		return tx
@@ -45,7 +44,9 @@ export const GET: RequestHandler = async ({ url, locals }) => {
  * Body: { projectId, assetId }
  * Returns: { clip } with the created clip row.
  */
-export const POST: RequestHandler = async ({ request, locals }) => {
+export const POST: RequestHandler = async (event) => {
+	const { request, locals } = event;
+	const env = getEnv(event);
 	const userId = getEffectiveUserId(locals);
 	if (!userId) {
 		error(401, { message: 'Session required.' });
@@ -66,7 +67,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		error(400, { message: 'Missing required field: assetId' });
 	}
 
-	const db = getDb();
+	const dbUrl = env.DATABASE_URL;
+	const db = dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
 
 	const clip = await withRLS(db, userId, async (tx) => {
 		// Fetch the source asset to get duration
@@ -126,7 +128,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
  * PATCH /api/arrangement
  * Update clip fields (debounced from client). Body: { clipId, ...fields }
  */
-export const PATCH: RequestHandler = async ({ request, locals }) => {
+export const PATCH: RequestHandler = async (event) => {
+	const { request, locals } = event;
+	const env = getEnv(event);
 	const userId = getEffectiveUserId(locals);
 	if (!userId) {
 		error(401, { message: 'Session required.' });
@@ -163,7 +167,8 @@ export const PATCH: RequestHandler = async ({ request, locals }) => {
 
 	dbUpdate.updatedAt = new Date();
 
-	const db = getDb();
+	const dbUrl = env.DATABASE_URL;
+	const db = dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
 
 	await withRLS(db, userId, async (tx) => {
 		await tx.update(arrangementClips).set(dbUpdate).where(eq(arrangementClips.id, clipId));
@@ -176,7 +181,9 @@ export const PATCH: RequestHandler = async ({ request, locals }) => {
  * DELETE /api/arrangement?clipId=...
  * Soft-delete an arrangement clip (immediate, not debounced).
  */
-export const DELETE: RequestHandler = async ({ url, locals }) => {
+export const DELETE: RequestHandler = async (event) => {
+	const { url, locals } = event;
+	const env = getEnv(event);
 	const userId = getEffectiveUserId(locals);
 	if (!userId) {
 		error(401, { message: 'Session required.' });
@@ -187,7 +194,8 @@ export const DELETE: RequestHandler = async ({ url, locals }) => {
 		error(400, { message: 'Missing required query parameter: clipId' });
 	}
 
-	const db = getDb();
+	const dbUrl = env.DATABASE_URL;
+	const db = dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
 	const now = new Date();
 
 	await withRLS(db, userId, async (tx) => {

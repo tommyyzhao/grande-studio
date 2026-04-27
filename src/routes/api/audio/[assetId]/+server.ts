@@ -6,25 +6,24 @@ import { audioAssets } from '$lib/server/db/schema';
 import { withRLS } from '$lib/server/db/rls';
 import { createR2StorageService } from '$lib/services/r2-storage';
 import { getEffectiveUserId } from '$lib/server/effective-user';
-
-function getDb() {
-	const dbUrl = process.env.DATABASE_URL ?? '';
-	return dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
-}
+import { getEnv } from '$lib/server/env';
 
 /**
  * GET /api/audio/[assetId]
  * Redirects to a signed R2 URL for the audio asset.
  * Requires session and asset ownership (enforced by RLS).
  */
-export const GET: RequestHandler = async ({ params, locals, platform }) => {
+export const GET: RequestHandler = async (event) => {
+	const { params, locals } = event;
+	const env = getEnv(event);
 	const userId = getEffectiveUserId(locals);
 	if (!userId) {
 		error(401, { message: 'Session required.' });
 	}
 
 	const { assetId } = params;
-	const db = getDb();
+	const dbUrl = env.DATABASE_URL;
+	const db = dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
 
 	const [asset] = await withRLS(db, userId, async (tx) => {
 		return tx
@@ -38,9 +37,9 @@ export const GET: RequestHandler = async ({ params, locals, platform }) => {
 		error(404, { message: 'Audio asset not found.' });
 	}
 
-	const bucket = platform?.env?.AUDIO_BUCKET;
-	const signingSecret = process.env.R2_SIGNING_SECRET ?? '';
-	const baseUrl = process.env.BETTER_AUTH_URL ?? 'http://localhost:5173';
+	const bucket = env.AUDIO_BUCKET;
+	const signingSecret = env.R2_SIGNING_SECRET;
+	const baseUrl = env.BETTER_AUTH_URL;
 
 	if (!bucket) {
 		error(503, { message: 'Audio storage not available.' });

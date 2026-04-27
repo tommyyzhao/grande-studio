@@ -10,9 +10,10 @@ import {
 
 // ─── MiniMax API Constants ──────────────────────────────────────────────────
 
-const MINIMAX_API_BASE = 'https://api.minimaxi.chat/v1';
+const MINIMAX_API_BASE = 'https://api.minimax.io/v1';
 const MINIMAX_MUSIC_ENDPOINT = `${MINIMAX_API_BASE}/music_generation`;
-const MINIMAX_MODEL = 'music-01';
+const MINIMAX_TEXT_TO_MUSIC_MODEL = 'music-2.6';
+const MINIMAX_COVER_MODEL = 'music-cover';
 
 // Known provider CDN domains — source audio must come from R2, not these
 const PROVIDER_CDN_DOMAINS = [
@@ -23,14 +24,25 @@ const PROVIDER_CDN_DOMAINS = [
 
 // ─── MiniMax API Request/Response Types ─────────────────────────────────────
 
+export interface MiniMaxAudioSetting {
+	sample_rate?: number;
+	bitrate?: number;
+	format?: string;
+}
+
 export interface MiniMaxMusicRequest {
 	model: string;
-	prompt: string;
+	prompt?: string;
 	lyrics?: string;
-	is_instrumental: boolean;
-	refer_voice?: string;
-	/** When true, MiniMax auto-generates/optimizes lyrics from the prompt */
-	lyrics_optimization?: boolean;
+	is_instrumental?: boolean;
+	lyrics_optimizer?: boolean;
+	stream?: boolean;
+	output_format?: 'hex' | 'url';
+	audio_setting?: MiniMaxAudioSetting;
+	/** Cover/re-style: source audio URL */
+	audio_url?: string;
+	/** Cover/re-style: base64-encoded source audio */
+	audio_base64?: string;
 }
 
 export interface MiniMaxMusicResponse {
@@ -40,17 +52,25 @@ export interface MiniMaxMusicResponse {
 	};
 	data: {
 		audio?: string;
-		audio_url?: string;
-		task_id: string;
+		status?: number;
 	};
+	trace_id?: string;
 	extra_info?: {
-		audio_format?: string;
-		audio_sample_rate?: number;
-		audio_size?: number;
+		music_duration?: number;
+		music_sample_rate?: number;
+		music_channel?: number;
 		bitrate?: number;
-		duration?: number;
+		music_size?: number;
 	};
 }
+
+// ─── Default Audio Settings ─────────────────────────────────────────────────
+
+const DEFAULT_AUDIO_SETTING: MiniMaxAudioSetting = {
+	sample_rate: 44100,
+	bitrate: 256000,
+	format: 'mp3'
+};
 
 // ─── Source URL Validation ──────────────────────────────────────────────────
 
@@ -90,9 +110,11 @@ export function validateR2SourceUrl(url: string): { valid: boolean; error?: stri
 
 export function buildTextToMusicPayload(input: TextToMusicInput): MiniMaxMusicRequest {
 	const payload: MiniMaxMusicRequest = {
-		model: MINIMAX_MODEL,
+		model: MINIMAX_TEXT_TO_MUSIC_MODEL,
 		prompt: input.prompt,
-		is_instrumental: false
+		is_instrumental: false,
+		output_format: 'hex',
+		audio_setting: DEFAULT_AUDIO_SETTING
 	};
 
 	if (input.lyrics) {
@@ -100,7 +122,7 @@ export function buildTextToMusicPayload(input: TextToMusicInput): MiniMaxMusicRe
 	}
 
 	if (input.lyricsOptimizer) {
-		payload.lyrics_optimization = true;
+		payload.lyrics_optimizer = true;
 	}
 
 	return payload;
@@ -108,9 +130,11 @@ export function buildTextToMusicPayload(input: TextToMusicInput): MiniMaxMusicRe
 
 export function buildInstrumentalPayload(input: InstrumentalGenerationInput): MiniMaxMusicRequest {
 	return {
-		model: MINIMAX_MODEL,
+		model: MINIMAX_TEXT_TO_MUSIC_MODEL,
 		prompt: input.prompt,
-		is_instrumental: true
+		is_instrumental: true,
+		output_format: 'hex',
+		audio_setting: DEFAULT_AUDIO_SETTING
 	};
 }
 
@@ -122,10 +146,11 @@ export function buildCoverRestylePayload(input: CoverRestyleInput): MiniMaxMusic
 	}
 
 	const payload: MiniMaxMusicRequest = {
-		model: MINIMAX_MODEL,
+		model: MINIMAX_COVER_MODEL,
 		prompt: input.prompt,
-		is_instrumental: false,
-		refer_voice: input.sourceAudioUrl
+		audio_url: input.sourceAudioUrl,
+		output_format: 'hex',
+		audio_setting: DEFAULT_AUDIO_SETTING
 	};
 
 	if (input.lyrics) {
@@ -172,6 +197,37 @@ async function callMiniMaxAPI(
 	return result;
 }
 
+/**
+ * Calls MiniMax with stream=true and returns the raw Response for SSE parsing.
+ * The streaming response comes from the same POST endpoint (not a separate GET).
+ */
+async function callMiniMaxStreamingAPI(
+	payload: MiniMaxMusicRequest,
+	apiKey: string
+): Promise<Response> {
+	const streamPayload = { ...payload, stream: true, output_format: 'hex' as const };
+
+	const response = await fetch(MINIMAX_MUSIC_ENDPOINT, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${apiKey}`
+		},
+		body: JSON.stringify(streamPayload)
+	});
+
+	if (!response.ok) {
+		const errorBody = await response.text().catch(() => '');
+		throw new MiniMaxApiError(
+			`MiniMax streaming error: ${response.status} ${response.statusText}`,
+			response.status,
+			errorBody
+		);
+	}
+
+	return response;
+}
+
 // ─── Error Types ────────────────────────────────────────────────────────────
 
 export class MiniMaxApiError extends Error {
@@ -213,7 +269,6 @@ export function decodeHexToBytes(hex: string): Uint8Array {
 
 /**
  * Normalizes MiniMax-specific errors into typed ProviderError objects.
- * Maps HTTP status codes and MiniMax application error codes to provider error codes.
  */
 export function normalizeMiniMaxError(error: unknown): ProviderError {
 	if (error instanceof ProviderError) {
@@ -221,7 +276,6 @@ export function normalizeMiniMaxError(error: unknown): ProviderError {
 	}
 
 	if (error instanceof MiniMaxApiError) {
-		// HTTP 401/403 → auth error
 		if (error.statusCode === 401 || error.statusCode === 403) {
 			return new ProviderError(
 				'MiniMax authentication failed',
@@ -230,7 +284,6 @@ export function normalizeMiniMaxError(error: unknown): ProviderError {
 				error.responseBody
 			);
 		}
-		// HTTP 429 → rate limited
 		if (error.statusCode === 429) {
 			return new ProviderError(
 				'MiniMax rate limit exceeded',
@@ -239,7 +292,6 @@ export function normalizeMiniMaxError(error: unknown): ProviderError {
 				error.responseBody
 			);
 		}
-		// HTTP 408/502/503/504 → timeout / server unavailable
 		if ([408, 502, 503, 504].includes(error.statusCode)) {
 			return new ProviderError(
 				'MiniMax request timed out or server unavailable',
@@ -248,7 +300,6 @@ export function normalizeMiniMaxError(error: unknown): ProviderError {
 				error.responseBody
 			);
 		}
-		// HTTP 400 or MiniMax application error codes (1000+) → validation error
 		if (error.statusCode === 400 || error.statusCode >= 1000) {
 			return new ProviderError(
 				`MiniMax validation error: ${error.message}`,
@@ -257,7 +308,6 @@ export function normalizeMiniMaxError(error: unknown): ProviderError {
 				error.responseBody
 			);
 		}
-		// All other HTTP errors → validation as catch-all
 		return new ProviderError(
 			`MiniMax error: ${error.message}`,
 			'provider_validation_error',
@@ -266,17 +316,14 @@ export function normalizeMiniMaxError(error: unknown): ProviderError {
 		);
 	}
 
-	// Network errors (fetch failed) → timeout
 	if (error instanceof TypeError && error.message.toLowerCase().includes('fetch')) {
 		return new ProviderError('MiniMax request failed: network error', 'provider_timeout');
 	}
 
-	// Abort errors → timeout
 	if (error instanceof DOMException && error.name === 'AbortError') {
 		return new ProviderError('MiniMax request timed out', 'provider_timeout');
 	}
 
-	// Unknown errors → validation as catch-all
 	const message = error instanceof Error ? error.message : String(error);
 	return new ProviderError(`MiniMax error: ${message}`, 'provider_validation_error');
 }
@@ -284,8 +331,8 @@ export function normalizeMiniMaxError(error: unknown): ProviderError {
 // ─── Stream Chunk Parsing ──────────────────────────────────────────────────
 
 /**
- * Parses a MiniMax streaming response body into hex audio chunks.
- * Handles both SSE-prefixed ("data: {...}") and plain JSON line formats.
+ * Parses a MiniMax SSE streaming response into hex audio chunks.
+ * MiniMax streams from the POST response body as text/event-stream.
  */
 export async function* parseStreamLines(
 	body: ReadableStream<Uint8Array>
@@ -316,10 +363,11 @@ export async function* parseStreamLines(
 						data?: { audio?: string; status?: number };
 						audio?: string;
 						is_final?: boolean;
+						extra_info?: Record<string, unknown>;
 					};
 					const audio = parsed.data?.audio ?? parsed.audio;
 					if (audio) {
-						const isFinal = parsed.is_final === true || parsed.data?.status === 2;
+						const isFinal = parsed.data?.status === 2 || parsed.is_final === true;
 						yield { hex: audio, isFinal };
 						if (isFinal) return;
 					}
@@ -355,14 +403,20 @@ export async function* parseStreamLines(
 
 // ─── Response → Handle Converter ────────────────────────────────────────────
 
-function toProviderHandle(response: MiniMaxMusicResponse): ProviderGenerationHandle {
+function toProviderHandle(
+	response: MiniMaxMusicResponse,
+	streaming: boolean
+): ProviderGenerationHandle {
 	return {
-		providerJobId: response.data.task_id,
-		supportsStreaming: !!response.data.audio,
+		providerJobId: response.trace_id ?? 'unknown',
+		supportsStreaming: streaming,
 		metadata: {
-			audioUrl: response.data.audio_url,
 			hasHexAudio: !!response.data.audio,
-			extraInfo: response.extra_info
+			hexAudio: response.data.audio,
+			extraInfo: response.extra_info,
+			durationMs: response.extra_info?.music_duration,
+			sampleRate: response.extra_info?.music_sample_rate,
+			format: 'mp3'
 		}
 	};
 }
@@ -379,7 +433,7 @@ export function createMiniMaxAdapter(apiKey: string): MusicProvider {
 			try {
 				const payload = buildTextToMusicPayload(input);
 				const response = await callMiniMaxAPI(payload, apiKey);
-				return toProviderHandle(response);
+				return toProviderHandle(response, false);
 			} catch (error) {
 				throw normalizeMiniMaxError(error);
 			}
@@ -391,7 +445,7 @@ export function createMiniMaxAdapter(apiKey: string): MusicProvider {
 			try {
 				const payload = buildInstrumentalPayload(input);
 				const response = await callMiniMaxAPI(payload, apiKey);
-				return toProviderHandle(response);
+				return toProviderHandle(response, false);
 			} catch (error) {
 				throw normalizeMiniMaxError(error);
 			}
@@ -401,71 +455,30 @@ export function createMiniMaxAdapter(apiKey: string): MusicProvider {
 			try {
 				const payload = buildCoverRestylePayload(input);
 				const response = await callMiniMaxAPI(payload, apiKey);
-				return toProviderHandle(response);
+				return toProviderHandle(response, false);
 			} catch (error) {
 				throw normalizeMiniMaxError(error);
 			}
 		},
 
 		async *streamGenerationAudio(
-			handle: ProviderGenerationHandle
+			input: TextToMusicInput | InstrumentalGenerationInput | CoverRestyleInput,
+			_handle?: ProviderGenerationHandle
 		): AsyncGenerator<ProviderAudioChunk, void, undefined> {
-			const metadata = handle.metadata as
-				| { audioUrl?: string; hasHexAudio?: boolean }
-				| undefined;
-
-			// Non-streaming URL fallback: fetch the URL and yield as a single chunk
-			if (!handle.supportsStreaming) {
-				const audioUrl = metadata?.audioUrl;
-				if (!audioUrl) {
-					throw new ProviderError(
-						'No streaming audio or download URL available',
-						'provider_validation_error'
-					);
-				}
-				try {
-					const response = await fetch(audioUrl);
-					if (!response.ok) {
-						throw new MiniMaxApiError(
-							`Failed to fetch audio: ${response.status} ${response.statusText}`,
-							response.status,
-							await response.text().catch(() => '')
-						);
-					}
-					const buffer = await response.arrayBuffer();
-					yield {
-						data: new Uint8Array(buffer),
-						sequence: 0,
-						isFinal: true
-					};
-					return;
-				} catch (error) {
-					throw normalizeMiniMaxError(error);
-				}
+			// Build the appropriate payload
+			let payload: MiniMaxMusicRequest;
+			if ('sourceAudioUrl' in input) {
+				payload = buildCoverRestylePayload(input as CoverRestyleInput);
+			} else if ('instrumental' in input && (input as TextToMusicInput).instrumental) {
+				payload = buildInstrumentalPayload(input as InstrumentalGenerationInput);
+			} else {
+				payload = buildTextToMusicPayload(input as TextToMusicInput);
 			}
 
-			// Streaming mode: fetch streaming hex chunks from MiniMax
+			// Call MiniMax with stream=true — streaming comes from the POST response body
 			let response: Response;
 			try {
-				response = await fetch(
-					`${MINIMAX_MUSIC_ENDPOINT}?task_id=${encodeURIComponent(handle.providerJobId)}`,
-					{
-						method: 'GET',
-						headers: {
-							Authorization: `Bearer ${apiKey}`,
-							Accept: 'text/event-stream'
-						}
-					}
-				);
-
-				if (!response.ok) {
-					const errorBody = await response.text().catch(() => '');
-					throw new MiniMaxApiError(
-						`MiniMax streaming error: ${response.status} ${response.statusText}`,
-						response.status,
-						errorBody
-					);
-				}
+				response = await callMiniMaxStreamingAPI(payload, apiKey);
 			} catch (error) {
 				throw normalizeMiniMaxError(error);
 			}

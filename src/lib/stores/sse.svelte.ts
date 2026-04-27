@@ -136,6 +136,9 @@ export function createSSEStore() {
 	}
 
 	function doConnect() {
+		// SSR guard: EventSource is only available in the browser
+		if (typeof EventSource === 'undefined') return;
+
 		// Clean up any existing connection
 		if (eventSource) {
 			eventSource.close();

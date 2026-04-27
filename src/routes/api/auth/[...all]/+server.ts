@@ -1,7 +1,14 @@
-import { auth } from '$lib/server/auth';
-import { toSvelteKitHandler } from 'better-auth/svelte-kit';
+import { getAuth } from '$lib/server/auth';
+import { getEnv } from '$lib/server/env';
+import type { RequestHandler } from './$types';
 
-const handleAuth = toSvelteKitHandler(auth);
+const handleRequest: RequestHandler = async (event) => {
+	const env = getEnv(event);
+	const auth = getAuth(env.DATABASE_URL, env.BETTER_AUTH_SECRET);
 
-export const GET = handleAuth;
-export const POST = handleAuth;
+	// Delegate to BetterAuth's handler
+	return auth.handler(event.request);
+};
+
+export const GET = handleRequest;
+export const POST = handleRequest;

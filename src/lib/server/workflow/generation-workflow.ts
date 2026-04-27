@@ -268,11 +268,15 @@ export async function runGenerationWorkflow(
 	currentJobStatus = 'generating';
 	currentAssetStatus = 'generating';
 
-	// ── Step 4: Call provider ────────────────────────────────────────────────
+	// ── Step 4+5: Build generation input, stream audio chunks ──────────────
+	// MiniMax streaming is a single POST with stream=true.
+	// We call streamGenerationAudio(input) directly, which handles the POST.
 
 	const requestPayload = job.requestJson as GenerationRequestPayload;
 
-	let handle: ProviderGenerationHandle;
+	// Build the typed generation input from the stored request payload
+	let generationInput: import('$lib/providers/types').TextToMusicInput | import('$lib/providers/types').InstrumentalGenerationInput | import('$lib/providers/types').CoverRestyleInput;
+
 	try {
 		// For cover/restyle, resolve source audio signed URL from R2
 		let sourceAudioUrl: string | undefined;
@@ -298,29 +302,28 @@ export async function runGenerationWorkflow(
 			sourceAudioUrl = await deps.r2.getSignedUrl(sourceAsset.r2ObjectKey);
 		}
 
-		// Call the appropriate generate method based on job type
 		switch (requestPayload.mode) {
 			case 'text_to_music':
-				handle = await deps.provider.generateTextToMusic({
+				generationInput = {
 					prompt: requestPayload.prompt,
 					lyrics: requestPayload.lyrics,
 					instrumental: false,
 					lyricsOptimizer: requestPayload.lyricsOptimizer,
 					structureTags: requestPayload.structureTags
-				});
+				};
 				break;
 			case 'instrumental':
-				handle = await deps.provider.generateInstrumental({
+				generationInput = {
 					prompt: requestPayload.prompt,
 					structureTags: requestPayload.structureTags
-				});
+				};
 				break;
 			case 'cover_restyle':
-				handle = await deps.provider.generateCoverRestyle({
+				generationInput = {
 					prompt: requestPayload.prompt,
 					sourceAudioUrl: sourceAudioUrl!,
 					lyrics: requestPayload.lyrics
-				});
+				};
 				break;
 		}
 	} catch (error) {
@@ -337,28 +340,28 @@ export async function runGenerationWorkflow(
 			deps, ownerId, jobId, assetId,
 			currentJobStatus, currentAssetStatus,
 			'provider_validation_error',
-			error instanceof Error ? error.message : 'Unknown error during provider call',
+			error instanceof Error ? error.message : 'Unknown error building generation input',
 			quotaReservationId
 		);
 	}
 
-	// ── Step 5: Stream audio chunks and assemble bytes ──────────────────────
-
+	// Stream audio from the provider (single POST with stream=true)
 	if (!deps.provider.streamGenerationAudio) {
 		return failWorkflow(
 			deps, ownerId, jobId, assetId,
 			currentJobStatus, currentAssetStatus,
 			'provider_validation_error',
-			'Provider does not support audio streaming or URL retrieval',
+			'Provider does not support streaming audio generation',
 			quotaReservationId
 		);
 	}
 
 	const chunks: ProviderAudioChunk[] = [];
 	let receivingAudioTransitioned = false;
+	let handle: ProviderGenerationHandle = { providerJobId: 'unknown', supportsStreaming: true };
 
 	try {
-		for await (const chunk of deps.provider.streamGenerationAudio(handle)) {
+		for await (const chunk of deps.provider.streamGenerationAudio(generationInput)) {
 			// Transition to 'receiving_audio' on first chunk
 			if (!receivingAudioTransitioned) {
 				const toReceiving = await transitionStatuses(
@@ -463,11 +466,10 @@ export async function runGenerationWorkflow(
 	currentJobStatus = 'persisting';
 	currentAssetStatus = 'persisting';
 
-	// Extract audio metadata from provider response where available
-	const extraInfo = (handle.metadata as { extraInfo?: { audio_format?: string; audio_sample_rate?: number; duration?: number } } | undefined)?.extraInfo;
-	const format = extraInfo?.audio_format ?? 'mp3';
-	const sampleRate = extraInfo?.audio_sample_rate ?? null;
-	const durationSec = extraInfo?.duration ?? null;
+	// Audio format is always MP3 from MiniMax (verified via integration test)
+	const format = 'mp3';
+	const sampleRate: number | null = 44100;
+	const durationSec: number | null = null; // Duration can be detected client-side from the audio buffer
 
 	const r2ObjectKey = buildObjectKey(ownerId, message.projectId, assetId, format);
 

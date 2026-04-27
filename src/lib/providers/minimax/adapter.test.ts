@@ -31,18 +31,27 @@ function createMockResponse(data: MiniMaxMusicResponse): Response {
 	} as Response;
 }
 
-function createSuccessResponse(taskId = 'task-123'): MiniMaxMusicResponse {
+function createSuccessResponse(traceId = 'trace-123'): MiniMaxMusicResponse {
 	return {
 		base_resp: { status_code: 0, status_msg: 'success' },
-		data: { task_id: taskId, audio_url: 'https://cdn.minimax.chat/audio/task-123.mp3' },
+		data: { audio: 'deadbeef' },
+		trace_id: traceId,
 		extra_info: {
-			audio_format: 'mp3',
-			audio_sample_rate: 44100,
-			audio_size: 1024000,
-			bitrate: 128000,
-			duration: 30
+			music_duration: 30000,
+			music_sample_rate: 44100,
+			music_channel: 2,
+			bitrate: 256000,
+			music_size: 1024000
 		}
 	};
+}
+
+function createTestInput(): TextToMusicInput {
+	return { prompt: 'test prompt', instrumental: false };
+}
+
+function createInstrumentalInput(): InstrumentalGenerationInput {
+	return { prompt: 'test prompt' };
 }
 
 function createMockStream(chunks: string[]): ReadableStream<Uint8Array> {
@@ -65,17 +74,6 @@ function createStreamingHandle(taskId = 'task-stream-001'): ProviderGenerationHa
 		providerJobId: taskId,
 		supportsStreaming: true,
 		metadata: { hasHexAudio: true }
-	};
-}
-
-function createUrlHandle(
-	taskId = 'task-url-001',
-	audioUrl = 'https://cdn.minimax.chat/audio/output.mp3'
-): ProviderGenerationHandle {
-	return {
-		providerJobId: taskId,
-		supportsStreaming: false,
-		metadata: { audioUrl, hasHexAudio: false }
 	};
 }
 
@@ -347,10 +345,12 @@ describe('buildTextToMusicPayload', () => {
 		const payload = buildTextToMusicPayload(input);
 
 		expect(payload).toEqual({
-			model: 'music-01',
+			model: 'music-2.6',
 			prompt: 'An upbeat pop song about summer',
 			lyrics: '[Verse]\nSunshine on the beach',
-			is_instrumental: false
+			is_instrumental: false,
+			output_format: 'hex',
+			audio_setting: { sample_rate: 44100, bitrate: 256000, format: 'mp3' }
 		});
 	});
 
@@ -376,7 +376,7 @@ describe('buildTextToMusicPayload', () => {
 		expect(payload.lyrics).toBeUndefined();
 	});
 
-	it('includes lyrics_optimization when optimizer is enabled', () => {
+	it('includes lyrics_optimizer when optimizer is enabled', () => {
 		const input: TextToMusicInput = {
 			prompt: 'A pop song',
 			instrumental: false,
@@ -384,10 +384,10 @@ describe('buildTextToMusicPayload', () => {
 		};
 
 		const payload = buildTextToMusicPayload(input);
-		expect(payload.lyrics_optimization).toBe(true);
+		expect(payload.lyrics_optimizer).toBe(true);
 	});
 
-	it('omits lyrics_optimization when optimizer is disabled', () => {
+	it('omits lyrics_optimizer when optimizer is disabled', () => {
 		const input: TextToMusicInput = {
 			prompt: 'A pop song',
 			lyrics: 'Some lyrics',
@@ -396,10 +396,10 @@ describe('buildTextToMusicPayload', () => {
 		};
 
 		const payload = buildTextToMusicPayload(input);
-		expect(payload.lyrics_optimization).toBeUndefined();
+		expect(payload.lyrics_optimizer).toBeUndefined();
 	});
 
-	it('includes both lyrics and lyrics_optimization when both provided', () => {
+	it('includes both lyrics and lyrics_optimizer when both provided', () => {
 		const input: TextToMusicInput = {
 			prompt: 'A pop song',
 			lyrics: '[Verse]\nHello world',
@@ -409,7 +409,7 @@ describe('buildTextToMusicPayload', () => {
 
 		const payload = buildTextToMusicPayload(input);
 		expect(payload.lyrics).toBe('[Verse]\nHello world');
-		expect(payload.lyrics_optimization).toBe(true);
+		expect(payload.lyrics_optimizer).toBe(true);
 	});
 });
 
@@ -422,9 +422,11 @@ describe('buildInstrumentalPayload', () => {
 		const payload = buildInstrumentalPayload(input);
 
 		expect(payload).toEqual({
-			model: 'music-01',
+			model: 'music-2.6',
 			prompt: 'A relaxing lo-fi beat',
-			is_instrumental: true
+			is_instrumental: true,
+			output_format: 'hex',
+			audio_setting: { sample_rate: 44100, bitrate: 256000, format: 'mp3' }
 		});
 	});
 
@@ -441,7 +443,7 @@ describe('buildInstrumentalPayload', () => {
 });
 
 describe('buildCoverRestylePayload', () => {
-	it('formats cover/re-style payload with refer_voice from R2 URL', () => {
+	it('formats cover/re-style payload with audio_url from R2 URL', () => {
 		const input: CoverRestyleInput = {
 			prompt: 'Make it jazzy',
 			sourceAudioUrl: 'https://r2.example.com/owner-123/proj-456/asset-789.mp3'
@@ -450,10 +452,11 @@ describe('buildCoverRestylePayload', () => {
 		const payload = buildCoverRestylePayload(input);
 
 		expect(payload).toEqual({
-			model: 'music-01',
+			model: 'music-cover',
 			prompt: 'Make it jazzy',
-			is_instrumental: false,
-			refer_voice: 'https://r2.example.com/owner-123/proj-456/asset-789.mp3'
+			audio_url: 'https://r2.example.com/owner-123/proj-456/asset-789.mp3',
+			output_format: 'hex',
+			audio_setting: { sample_rate: 44100, bitrate: 256000, format: 'mp3' }
 		});
 	});
 
@@ -478,14 +481,14 @@ describe('buildCoverRestylePayload', () => {
 		expect(payload.lyrics).toBeUndefined();
 	});
 
-	it('always sets is_instrumental=false for cover mode', () => {
+	it('does not set is_instrumental for cover mode', () => {
 		const input: CoverRestyleInput = {
 			prompt: 'Instrumental cover',
 			sourceAudioUrl: 'https://r2.example.com/audio/source.mp3'
 		};
 
 		const payload = buildCoverRestylePayload(input);
-		expect(payload.is_instrumental).toBe(false);
+		expect(payload.is_instrumental).toBeUndefined();
 	});
 
 	it('rejects provider CDN URLs as source audio', () => {
@@ -542,7 +545,7 @@ describe('buildCoverRestylePayload', () => {
 		};
 
 		const payload = buildCoverRestylePayload(input);
-		expect(payload.refer_voice).toBe(input.sourceAudioUrl);
+		expect(payload.audio_url).toBe(input.sourceAudioUrl);
 	});
 
 	it('accepts custom domain R2 URLs', () => {
@@ -552,7 +555,7 @@ describe('buildCoverRestylePayload', () => {
 		};
 
 		const payload = buildCoverRestylePayload(input);
-		expect(payload.refer_voice).toBe(input.sourceAudioUrl);
+		expect(payload.audio_url).toBe(input.sourceAudioUrl);
 	});
 });
 
@@ -628,7 +631,7 @@ describe('createMiniMaxAdapter', () => {
 
 	describe('generateTextToMusic', () => {
 		it('sends correct payload and returns handle', async () => {
-			const mockResponse = createSuccessResponse('task-ttm-001');
+			const mockResponse = createSuccessResponse('trace-ttm-001');
 			fetchSpy.mockResolvedValueOnce(createMockResponse(mockResponse));
 
 			const adapter = createMiniMaxAdapter('test-api-key');
@@ -640,7 +643,7 @@ describe('createMiniMaxAdapter', () => {
 
 			expect(fetchSpy).toHaveBeenCalledOnce();
 			const [url, options] = fetchSpy.mock.calls[0];
-			expect(url).toBe('https://api.minimaxi.chat/v1/music_generation');
+			expect(url).toBe('https://api.minimax.io/v1/music_generation');
 
 			const requestInit = options as RequestInit;
 			expect(requestInit.method).toBe('POST');
@@ -652,15 +655,17 @@ describe('createMiniMaxAdapter', () => {
 			);
 
 			const body = JSON.parse(requestInit.body as string);
-			expect(body.model).toBe('music-01');
+			expect(body.model).toBe('music-2.6');
 			expect(body.prompt).toBe('A dreamy synth pop track');
 			expect(body.lyrics).toBe('[Verse]\nDreaming of stars');
 			expect(body.is_instrumental).toBe(false);
+			expect(body.output_format).toBe('hex');
+			expect(body.audio_setting).toEqual({ sample_rate: 44100, bitrate: 256000, format: 'mp3' });
 
-			expect(handle.providerJobId).toBe('task-ttm-001');
+			expect(handle.providerJobId).toBe('trace-ttm-001');
 		});
 
-		it('passes lyrics_optimization flag through', async () => {
+		it('passes lyrics_optimizer flag through', async () => {
 			fetchSpy.mockResolvedValueOnce(createMockResponse(createSuccessResponse()));
 
 			const adapter = createMiniMaxAdapter('test-api-key');
@@ -671,13 +676,13 @@ describe('createMiniMaxAdapter', () => {
 			});
 
 			const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
-			expect(body.lyrics_optimization).toBe(true);
+			expect(body.lyrics_optimizer).toBe(true);
 		});
 	});
 
 	describe('generateInstrumental', () => {
 		it('sends is_instrumental=true and no lyrics', async () => {
-			const mockResponse = createSuccessResponse('task-inst-001');
+			const mockResponse = createSuccessResponse('trace-inst-001');
 			fetchSpy.mockResolvedValueOnce(createMockResponse(mockResponse));
 
 			const adapter = createMiniMaxAdapter('test-api-key');
@@ -689,14 +694,17 @@ describe('createMiniMaxAdapter', () => {
 			expect(body.is_instrumental).toBe(true);
 			expect(body.lyrics).toBeUndefined();
 			expect(body.prompt).toBe('A chill lo-fi beat');
+			expect(body.model).toBe('music-2.6');
+			expect(body.output_format).toBe('hex');
+			expect(body.audio_setting).toEqual({ sample_rate: 44100, bitrate: 256000, format: 'mp3' });
 
-			expect(handle.providerJobId).toBe('task-inst-001');
+			expect(handle.providerJobId).toBe('trace-inst-001');
 		});
 	});
 
 	describe('generateCoverRestyle', () => {
-		it('sends refer_voice with R2 source audio URL', async () => {
-			const mockResponse = createSuccessResponse('task-cover-001');
+		it('sends audio_url with R2 source audio URL', async () => {
+			const mockResponse = createSuccessResponse('trace-cover-001');
 			fetchSpy.mockResolvedValueOnce(createMockResponse(mockResponse));
 
 			const adapter = createMiniMaxAdapter('test-api-key');
@@ -706,17 +714,18 @@ describe('createMiniMaxAdapter', () => {
 			});
 
 			const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
-			expect(body.refer_voice).toBe('https://r2.example.com/owner-1/proj-1/asset-1.mp3');
+			expect(body.audio_url).toBe('https://r2.example.com/owner-1/proj-1/asset-1.mp3');
 			expect(body.prompt).toBe('Make it jazzy');
-			expect(body.is_instrumental).toBe(false);
-			expect(body.model).toBe('music-01');
+			expect(body.model).toBe('music-cover');
+			expect(body.output_format).toBe('hex');
+			expect(body.audio_setting).toEqual({ sample_rate: 44100, bitrate: 256000, format: 'mp3' });
 
-			expect(handle.providerJobId).toBe('task-cover-001');
+			expect(handle.providerJobId).toBe('trace-cover-001');
 			expect(handle.supportsStreaming).toBe(false);
 		});
 
 		it('sends lyrics when provided in cover mode', async () => {
-			const mockResponse = createSuccessResponse('task-cover-lyrics');
+			const mockResponse = createSuccessResponse('trace-cover-lyrics');
 			fetchSpy.mockResolvedValueOnce(createMockResponse(mockResponse));
 
 			const adapter = createMiniMaxAdapter('test-api-key');
@@ -728,11 +737,11 @@ describe('createMiniMaxAdapter', () => {
 
 			const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
 			expect(body.lyrics).toBe('[Verse]\nNew jazz lyrics here');
-			expect(body.refer_voice).toBe('https://r2.example.com/audio/source.mp3');
+			expect(body.audio_url).toBe('https://r2.example.com/audio/source.mp3');
 		});
 
 		it('omits lyrics when not provided in cover mode', async () => {
-			const mockResponse = createSuccessResponse('task-cover-no-lyrics');
+			const mockResponse = createSuccessResponse('trace-cover-no-lyrics');
 			fetchSpy.mockResolvedValueOnce(createMockResponse(mockResponse));
 
 			const adapter = createMiniMaxAdapter('test-api-key');
@@ -761,14 +770,14 @@ describe('createMiniMaxAdapter', () => {
 		it('returns handle with metadata from cover response', async () => {
 			const mockResponse: MiniMaxMusicResponse = {
 				base_resp: { status_code: 0, status_msg: 'success' },
-				data: {
-					task_id: 'task-cover-meta',
-					audio_url: 'https://cdn.minimaxi.chat/cover-out.mp3'
-				},
+				data: { audio: 'cafebabe' },
+				trace_id: 'trace-cover-meta',
 				extra_info: {
-					audio_format: 'mp3',
-					audio_sample_rate: 44100,
-					duration: 25
+					music_duration: 25000,
+					music_sample_rate: 44100,
+					music_channel: 2,
+					bitrate: 256000,
+					music_size: 800000
 				}
 			};
 			fetchSpy.mockResolvedValueOnce(createMockResponse(mockResponse));
@@ -779,11 +788,14 @@ describe('createMiniMaxAdapter', () => {
 				sourceAudioUrl: 'https://r2.example.com/audio/source.mp3'
 			});
 
-			expect(handle.providerJobId).toBe('task-cover-meta');
+			expect(handle.providerJobId).toBe('trace-cover-meta');
 			expect(handle.metadata).toEqual(
 				expect.objectContaining({
-					audioUrl: 'https://cdn.minimaxi.chat/cover-out.mp3',
-					hasHexAudio: false
+					hasHexAudio: true,
+					hexAudio: 'cafebabe',
+					durationMs: 25000,
+					sampleRate: 44100,
+					format: 'mp3'
 				})
 			);
 		});
@@ -856,7 +868,7 @@ describe('createMiniMaxAdapter', () => {
 			fetchSpy.mockResolvedValueOnce(
 				createMockResponse({
 					base_resp: { status_code: 1001, status_msg: 'Invalid parameter' },
-					data: { task_id: '' }
+					data: {}
 				})
 			);
 
@@ -895,8 +907,8 @@ describe('createMiniMaxAdapter', () => {
 	});
 
 	describe('response mapping', () => {
-		it('maps audio_url to metadata', async () => {
-			const mockResponse = createSuccessResponse('task-meta-001');
+		it('maps extra_info to metadata', async () => {
+			const mockResponse = createSuccessResponse('trace-meta-001');
 			fetchSpy.mockResolvedValueOnce(createMockResponse(mockResponse));
 
 			const adapter = createMiniMaxAdapter('test-api-key');
@@ -908,17 +920,22 @@ describe('createMiniMaxAdapter', () => {
 
 			expect(handle.metadata).toEqual(
 				expect.objectContaining({
-					audioUrl: 'https://cdn.minimax.chat/audio/task-123.mp3'
+					hasHexAudio: true,
+					hexAudio: 'deadbeef',
+					durationMs: 30000,
+					sampleRate: 44100,
+					format: 'mp3'
 				})
 			);
 		});
 
-		it('sets supportsStreaming based on hex audio presence', async () => {
-			const responseWithHex: MiniMaxMusicResponse = {
+		it('maps trace_id to providerJobId', async () => {
+			const responseWithTrace: MiniMaxMusicResponse = {
 				base_resp: { status_code: 0, status_msg: 'success' },
-				data: { task_id: 'task-hex', audio: 'deadbeef' }
+				data: { audio: 'deadbeef' },
+				trace_id: 'trace-abc-123'
 			};
-			fetchSpy.mockResolvedValueOnce(createMockResponse(responseWithHex));
+			fetchSpy.mockResolvedValueOnce(createMockResponse(responseWithTrace));
 
 			const adapter = createMiniMaxAdapter('test-api-key');
 			const handle = await adapter.generateTextToMusic({
@@ -927,15 +944,15 @@ describe('createMiniMaxAdapter', () => {
 				instrumental: false
 			});
 
-			expect(handle.supportsStreaming).toBe(true);
+			expect(handle.providerJobId).toBe('trace-abc-123');
 		});
 
-		it('sets supportsStreaming=false when no hex audio', async () => {
-			const responseUrlOnly: MiniMaxMusicResponse = {
+		it('sets supportsStreaming=false for non-streaming calls', async () => {
+			const response: MiniMaxMusicResponse = {
 				base_resp: { status_code: 0, status_msg: 'success' },
-				data: { task_id: 'task-url', audio_url: 'https://cdn.example.com/audio.mp3' }
+				data: { audio: 'deadbeef' }
 			};
-			fetchSpy.mockResolvedValueOnce(createMockResponse(responseUrlOnly));
+			fetchSpy.mockResolvedValueOnce(createMockResponse(response));
 
 			const adapter = createMiniMaxAdapter('test-api-key');
 			const handle = await adapter.generateTextToMusic({
@@ -951,194 +968,163 @@ describe('createMiniMaxAdapter', () => {
 	// ─── Streaming Audio Tests ──────────────────────────────────────────────
 
 	describe('streamGenerationAudio', () => {
-		describe('streaming mode', () => {
-			it('yields decoded hex chunks with correct sequence numbers', async () => {
-				const stream = createMockStream([
-					'{"audio":"48656c6c6f"}\n',
-					'{"audio":"576f726c64","is_final":true}\n'
-				]);
+		it('yields decoded hex chunks with correct sequence numbers', async () => {
+			const stream = createMockStream([
+				'{"audio":"48656c6c6f"}\n',
+				'{"audio":"576f726c64","is_final":true}\n'
+			]);
 
-				fetchSpy.mockResolvedValueOnce({
-					ok: true,
-					status: 200,
-					body: stream
-				} as Response);
+			fetchSpy.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				body: stream
+			} as Response);
 
-				const adapter = createMiniMaxAdapter('test-api-key');
-				const handle = createStreamingHandle();
-				const chunks = await collectChunks(adapter.streamGenerationAudio!(handle));
+			const adapter = createMiniMaxAdapter('test-api-key');
+			const chunks = await collectChunks(adapter.streamGenerationAudio!(createTestInput()));
 
-				expect(chunks).toHaveLength(2);
-				expect(chunks[0].data).toEqual(new Uint8Array([0x48, 0x65, 0x6c, 0x6c, 0x6f]));
-				expect(chunks[0].sequence).toBe(0);
-				expect(chunks[0].isFinal).toBe(false);
-				expect(chunks[1].data).toEqual(new Uint8Array([0x57, 0x6f, 0x72, 0x6c, 0x64]));
-				expect(chunks[1].sequence).toBe(1);
-				expect(chunks[1].isFinal).toBe(true);
-			});
-
-			it('sends correct streaming request with auth header', async () => {
-				const stream = createMockStream(['{"audio":"aabb","is_final":true}\n']);
-				fetchSpy.mockResolvedValueOnce({
-					ok: true,
-					status: 200,
-					body: stream
-				} as Response);
-
-				const adapter = createMiniMaxAdapter('my-secret-key');
-				const handle = createStreamingHandle('task-42');
-				await collectChunks(adapter.streamGenerationAudio!(handle));
-
-				expect(fetchSpy).toHaveBeenCalledOnce();
-				const [url, options] = fetchSpy.mock.calls[0];
-				expect(url).toContain('task_id=task-42');
-				expect((options as RequestInit).headers).toEqual(
-					expect.objectContaining({
-						Authorization: 'Bearer my-secret-key'
-					})
-				);
-			});
-
-			it('detects stream termination via is_final flag', async () => {
-				const stream = createMockStream([
-					'{"audio":"aa"}\n',
-					'{"audio":"bb"}\n',
-					'{"audio":"cc","is_final":true}\n',
-					'{"audio":"dd"}\n' // should not appear
-				]);
-				fetchSpy.mockResolvedValueOnce({ ok: true, status: 200, body: stream } as Response);
-
-				const adapter = createMiniMaxAdapter('test-api-key');
-				const chunks = await collectChunks(
-					adapter.streamGenerationAudio!(createStreamingHandle())
-				);
-
-				expect(chunks).toHaveLength(3);
-				expect(chunks[2].isFinal).toBe(true);
-			});
-
-			it('detects stream termination via [DONE] marker', async () => {
-				const stream = createMockStream([
-					'data: {"audio":"aabb"}\n',
-					'data: [DONE]\n',
-					'data: {"audio":"ccdd"}\n' // should not appear
-				]);
-				fetchSpy.mockResolvedValueOnce({ ok: true, status: 200, body: stream } as Response);
-
-				const adapter = createMiniMaxAdapter('test-api-key');
-				const chunks = await collectChunks(
-					adapter.streamGenerationAudio!(createStreamingHandle())
-				);
-
-				expect(chunks).toHaveLength(1);
-				expect(chunks[0].data).toEqual(new Uint8Array([0xaa, 0xbb]));
-			});
-
-			it('normalizes errors during streaming fetch', async () => {
-				fetchSpy.mockResolvedValueOnce({
-					ok: false,
-					status: 401,
-					statusText: 'Unauthorized',
-					text: () => Promise.resolve('Bad auth')
-				} as Response);
-
-				const adapter = createMiniMaxAdapter('bad-key');
-				try {
-					await collectChunks(
-						adapter.streamGenerationAudio!(createStreamingHandle())
-					);
-					expect.fail('Should have thrown');
-				} catch (error) {
-					expect(error).toBeInstanceOf(ProviderError);
-					expect((error as ProviderError).code).toBe('provider_auth_error');
-				}
-			});
-
-			it('throws ProviderError when response has no body', async () => {
-				fetchSpy.mockResolvedValueOnce({
-					ok: true,
-					status: 200,
-					body: null
-				} as Response);
-
-				const adapter = createMiniMaxAdapter('test-api-key');
-				try {
-					await collectChunks(
-						adapter.streamGenerationAudio!(createStreamingHandle())
-					);
-					expect.fail('Should have thrown');
-				} catch (error) {
-					expect(error).toBeInstanceOf(ProviderError);
-					expect((error as ProviderError).code).toBe('provider_validation_error');
-					expect((error as ProviderError).message).toContain('no body');
-				}
-			});
+			expect(chunks).toHaveLength(2);
+			expect(chunks[0].data).toEqual(new Uint8Array([0x48, 0x65, 0x6c, 0x6c, 0x6f]));
+			expect(chunks[0].sequence).toBe(0);
+			expect(chunks[0].isFinal).toBe(false);
+			expect(chunks[1].data).toEqual(new Uint8Array([0x57, 0x6f, 0x72, 0x6c, 0x64]));
+			expect(chunks[1].sequence).toBe(1);
+			expect(chunks[1].isFinal).toBe(true);
 		});
 
-		describe('URL fallback', () => {
-			it('fetches URL and yields single chunk when supportsStreaming=false', async () => {
-				const audioBytes = new Uint8Array([0x49, 0x44, 0x33]); // ID3 header
-				fetchSpy.mockResolvedValueOnce({
-					ok: true,
-					status: 200,
-					arrayBuffer: () => Promise.resolve(audioBytes.buffer)
-				} as Response);
+		it('sends POST to music_generation endpoint with stream:true and auth header', async () => {
+			const stream = createMockStream(['{"audio":"aabb","is_final":true}\n']);
+			fetchSpy.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				body: stream
+			} as Response);
 
-				const adapter = createMiniMaxAdapter('test-api-key');
-				const handle = createUrlHandle('task-url', 'https://cdn.example.com/audio.mp3');
-				const chunks = await collectChunks(adapter.streamGenerationAudio!(handle));
+			const adapter = createMiniMaxAdapter('my-secret-key');
+			await collectChunks(adapter.streamGenerationAudio!(createTestInput()));
 
-				expect(chunks).toHaveLength(1);
-				expect(chunks[0].data).toEqual(audioBytes);
-				expect(chunks[0].sequence).toBe(0);
-				expect(chunks[0].isFinal).toBe(true);
+			expect(fetchSpy).toHaveBeenCalledOnce();
+			const [url, options] = fetchSpy.mock.calls[0];
+			expect(url).toBe('https://api.minimax.io/v1/music_generation');
 
-				// Verify the fetch was made to the audio URL
-				expect(fetchSpy).toHaveBeenCalledWith('https://cdn.example.com/audio.mp3');
-			});
+			const requestInit = options as RequestInit;
+			expect(requestInit.method).toBe('POST');
+			expect(requestInit.headers).toEqual(
+				expect.objectContaining({
+					'Content-Type': 'application/json',
+					Authorization: 'Bearer my-secret-key'
+				})
+			);
 
-			it('throws ProviderError when no URL available and supportsStreaming=false', async () => {
-				const adapter = createMiniMaxAdapter('test-api-key');
-				const handle: ProviderGenerationHandle = {
-					providerJobId: 'task-no-url',
-					supportsStreaming: false,
-					metadata: { hasHexAudio: false }
-				};
+			const body = JSON.parse(requestInit.body as string);
+			expect(body.stream).toBe(true);
+			expect(body.output_format).toBe('hex');
+			expect(body.model).toBe('music-2.6');
+			expect(body.audio_setting).toEqual({ sample_rate: 44100, bitrate: 256000, format: 'mp3' });
+		});
 
-				try {
-					await collectChunks(adapter.streamGenerationAudio!(handle));
-					expect.fail('Should have thrown');
-				} catch (error) {
-					expect(error).toBeInstanceOf(ProviderError);
-					expect((error as ProviderError).code).toBe('provider_validation_error');
-					expect((error as ProviderError).message).toContain(
-						'No streaming audio or download URL'
-					);
-				}
-			});
+		it('uses instrumental payload when input has no instrumental field', async () => {
+			const stream = createMockStream(['{"audio":"aabb","is_final":true}\n']);
+			fetchSpy.mockResolvedValueOnce({ ok: true, status: 200, body: stream } as Response);
 
-			it('normalizes fetch errors in URL fallback', async () => {
-				fetchSpy.mockResolvedValueOnce({
-					ok: false,
-					status: 503,
-					statusText: 'Service Unavailable',
-					text: () => Promise.resolve('Server error')
-				} as Response);
+			const adapter = createMiniMaxAdapter('test-api-key');
+			await collectChunks(adapter.streamGenerationAudio!(createInstrumentalInput()));
 
-				const adapter = createMiniMaxAdapter('test-api-key');
-				const handle = createUrlHandle(
-					'task-url-err',
-					'https://cdn.example.com/audio.mp3'
+			const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+			expect(body.model).toBe('music-2.6');
+			expect(body.prompt).toBe('test prompt');
+		});
+
+		it('uses cover payload when input has sourceAudioUrl', async () => {
+			const stream = createMockStream(['{"audio":"aabb","is_final":true}\n']);
+			fetchSpy.mockResolvedValueOnce({ ok: true, status: 200, body: stream } as Response);
+
+			const adapter = createMiniMaxAdapter('test-api-key');
+			const coverInput: CoverRestyleInput = {
+				prompt: 'restyle it',
+				sourceAudioUrl: 'https://r2.example.com/audio/source.mp3'
+			};
+			await collectChunks(adapter.streamGenerationAudio!(coverInput));
+
+			const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+			expect(body.model).toBe('music-cover');
+			expect(body.audio_url).toBe('https://r2.example.com/audio/source.mp3');
+			expect(body.stream).toBe(true);
+		});
+
+		it('detects stream termination via is_final flag', async () => {
+			const stream = createMockStream([
+				'{"audio":"aa"}\n',
+				'{"audio":"bb"}\n',
+				'{"audio":"cc","is_final":true}\n',
+				'{"audio":"dd"}\n' // should not appear
+			]);
+			fetchSpy.mockResolvedValueOnce({ ok: true, status: 200, body: stream } as Response);
+
+			const adapter = createMiniMaxAdapter('test-api-key');
+			const chunks = await collectChunks(
+				adapter.streamGenerationAudio!(createTestInput())
+			);
+
+			expect(chunks).toHaveLength(3);
+			expect(chunks[2].isFinal).toBe(true);
+		});
+
+		it('detects stream termination via [DONE] marker', async () => {
+			const stream = createMockStream([
+				'data: {"audio":"aabb"}\n',
+				'data: [DONE]\n',
+				'data: {"audio":"ccdd"}\n' // should not appear
+			]);
+			fetchSpy.mockResolvedValueOnce({ ok: true, status: 200, body: stream } as Response);
+
+			const adapter = createMiniMaxAdapter('test-api-key');
+			const chunks = await collectChunks(
+				adapter.streamGenerationAudio!(createTestInput())
+			);
+
+			expect(chunks).toHaveLength(1);
+			expect(chunks[0].data).toEqual(new Uint8Array([0xaa, 0xbb]));
+		});
+
+		it('normalizes errors during streaming fetch', async () => {
+			fetchSpy.mockResolvedValueOnce({
+				ok: false,
+				status: 401,
+				statusText: 'Unauthorized',
+				text: () => Promise.resolve('Bad auth')
+			} as Response);
+
+			const adapter = createMiniMaxAdapter('bad-key');
+			try {
+				await collectChunks(
+					adapter.streamGenerationAudio!(createTestInput())
 				);
+				expect.fail('Should have thrown');
+			} catch (error) {
+				expect(error).toBeInstanceOf(ProviderError);
+				expect((error as ProviderError).code).toBe('provider_auth_error');
+			}
+		});
 
-				try {
-					await collectChunks(adapter.streamGenerationAudio!(handle));
-					expect.fail('Should have thrown');
-				} catch (error) {
-					expect(error).toBeInstanceOf(ProviderError);
-					expect((error as ProviderError).code).toBe('provider_timeout');
-				}
-			});
+		it('throws ProviderError when response has no body', async () => {
+			fetchSpy.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				body: null
+			} as Response);
+
+			const adapter = createMiniMaxAdapter('test-api-key');
+			try {
+				await collectChunks(
+					adapter.streamGenerationAudio!(createTestInput())
+				);
+				expect.fail('Should have thrown');
+			} catch (error) {
+				expect(error).toBeInstanceOf(ProviderError);
+				expect((error as ProviderError).code).toBe('provider_validation_error');
+				expect((error as ProviderError).message).toContain('no body');
+			}
 		});
 	});
 });

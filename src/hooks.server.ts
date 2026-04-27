@@ -1,6 +1,6 @@
 import type { Handle } from '@sveltejs/kit';
 import { redirect } from '@sveltejs/kit';
-import { auth } from '$lib/server/auth';
+import { getAuth } from '$lib/server/auth';
 
 /** Routes that require authentication — redirect to /signin if no session. */
 const PROTECTED_PREFIXES = ['/projects'];
@@ -8,6 +8,12 @@ const PROTECTED_PREFIXES = ['/projects'];
 const TEMP_SESSION_COOKIE = 'temp_session_id';
 
 export const handle: Handle = async ({ event, resolve }) => {
+	const dbUrl =
+		event.platform?.env?.DATABASE_URL ?? process.env.DATABASE_URL ?? '';
+	const secret =
+		event.platform?.env?.BETTER_AUTH_SECRET ?? process.env.BETTER_AUTH_SECRET;
+	const auth = getAuth(dbUrl, secret);
+
 	const session = await auth.api.getSession({
 		headers: event.request.headers
 	});

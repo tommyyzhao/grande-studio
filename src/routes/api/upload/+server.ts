@@ -6,6 +6,7 @@ import { audioAssets } from '$lib/server/db/schema';
 import { withRLS } from '$lib/server/db/rls';
 import { createR2StorageService, buildObjectKey } from '$lib/services/r2-storage';
 import { getEffectiveUserId } from '$lib/server/effective-user';
+import { getEnv } from '$lib/server/env';
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
@@ -43,7 +44,9 @@ function resolveExtension(mimeType: string, filename: string): string | null {
 	return getExtensionFromFilename(filename);
 }
 
-export const POST: RequestHandler = async ({ request, locals, platform }) => {
+export const POST: RequestHandler = async (event) => {
+	const { request, locals, platform } = event;
+	const env = getEnv(event);
 	// 1. Validate session (authenticated user OR temp session)
 	const userId = getEffectiveUserId(locals);
 	if (!userId) {
@@ -93,12 +96,12 @@ export const POST: RequestHandler = async ({ request, locals, platform }) => {
 	const bytes = new Uint8Array(await file.arrayBuffer());
 
 	// 6. Set up DB and R2
-	const dbUrl = process.env.DATABASE_URL ?? '';
+	const dbUrl = env.DATABASE_URL;
 	const db = dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
 
-	const bucket = platform?.env?.AUDIO_BUCKET;
-	const signingSecret = process.env.R2_SIGNING_SECRET ?? '';
-	const baseUrl = process.env.BETTER_AUTH_URL ?? 'http://localhost:5173';
+	const bucket = env.AUDIO_BUCKET ?? platform?.env?.AUDIO_BUCKET;
+	const signingSecret = env.R2_SIGNING_SECRET;
+	const baseUrl = env.BETTER_AUTH_URL;
 
 	if (!bucket) {
 		console.warn('R2 bucket binding not available — skipping file upload to R2.');

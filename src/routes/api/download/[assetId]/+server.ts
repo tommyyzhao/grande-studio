@@ -5,11 +5,7 @@ import { createLocalDb, createNeonDb } from '$lib/server/db';
 import { audioAssets } from '$lib/server/db/schema';
 import { withRLS } from '$lib/server/db/rls';
 import { getEffectiveUserId } from '$lib/server/effective-user';
-
-function getDb() {
-	const dbUrl = process.env.DATABASE_URL ?? '';
-	return dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
-}
+import { getEnv } from '$lib/server/env';
 
 /** Sanitize a string for use as a filename */
 function sanitizeFilename(name: string): string {
@@ -41,14 +37,17 @@ function formatToContentType(format: string | null): string {
  * Serves the audio file from R2 with Content-Disposition: attachment for download.
  * Requires session and asset ownership (enforced by RLS).
  */
-export const GET: RequestHandler = async ({ params, locals, platform }) => {
+export const GET: RequestHandler = async (event) => {
+	const { params, locals } = event;
+	const env = getEnv(event);
 	const userId = getEffectiveUserId(locals);
 	if (!userId) {
 		error(401, { message: 'Session required.' });
 	}
 
 	const { assetId } = params;
-	const db = getDb();
+	const dbUrl = env.DATABASE_URL;
+	const db = dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
 
 	const [asset] = await withRLS(db, userId, async (tx) => {
 		return tx
@@ -67,7 +66,7 @@ export const GET: RequestHandler = async ({ params, locals, platform }) => {
 		error(404, { message: 'Audio asset not found.' });
 	}
 
-	const bucket = platform?.env?.AUDIO_BUCKET;
+	const bucket = env.AUDIO_BUCKET;
 	if (!bucket) {
 		error(503, { message: 'Audio storage not available.' });
 	}

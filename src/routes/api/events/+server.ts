@@ -8,6 +8,7 @@ import { gte } from 'drizzle-orm';
 import { createLiveChunkReader } from '$lib/services/live-chunks';
 import type { LiveChunkReader } from '$lib/services/live-chunks';
 import { getEffectiveUserId } from '$lib/server/effective-user';
+import { getEnv } from '$lib/server/env';
 
 const POLL_INTERVAL_MS = 2000;
 const HEARTBEAT_INTERVAL_MS = 30000;
@@ -37,7 +38,10 @@ interface LiveJobState {
 	lastChunkIndex: number;
 }
 
-export const GET: RequestHandler = async ({ locals, request, platform }) => {
+export const GET: RequestHandler = async (event) => {
+	const { locals, request } = event;
+	const env = getEnv(event);
+
 	// 1. Validate session (authenticated user OR temp session)
 	const userId = getEffectiveUserId(locals);
 	if (!userId) {
@@ -45,12 +49,12 @@ export const GET: RequestHandler = async ({ locals, request, platform }) => {
 	}
 
 	// 2. Set up DB
-	const dbUrl = process.env.DATABASE_URL ?? '';
+	const dbUrl = env.DATABASE_URL;
 	const db = dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
 
 	// 3. Set up live chunk reader (optional — requires KV binding)
 	const chunkReader: LiveChunkReader | null =
-		platform?.env?.LIVE_KV ? createLiveChunkReader(platform.env.LIVE_KV) : null;
+		env.LIVE_KV ? createLiveChunkReader(env.LIVE_KV) : null;
 
 	// 4. Polling state
 	const knownStatuses = new Map<string, JobStatus>();

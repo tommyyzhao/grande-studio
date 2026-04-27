@@ -10,13 +10,16 @@ import {
 	TEMP_SESSION_LIMIT
 } from '$lib/services/quota';
 import type { BlockAsset } from '$lib/types';
+import { getEnv } from '$lib/server/env';
 
-function getDb() {
-	const dbUrl = process.env.DATABASE_URL ?? '';
-	return dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
-}
+export const load: PageServerLoad = async (event) => {
+	const { locals } = event;
+	const env = getEnv(event);
 
-export const load: PageServerLoad = async ({ locals }) => {
+	function getDb() {
+		const dbUrl = env.DATABASE_URL;
+		return dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
+	}
 	const user = locals.user;
 	const tempSessionId = locals.tempSessionId;
 

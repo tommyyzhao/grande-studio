@@ -16,6 +16,7 @@ import {
 	TEMP_SESSION_LIMIT
 } from '$lib/services/quota';
 import { getEffectiveUserId, isTempSession } from '$lib/server/effective-user';
+import { getEnv } from '$lib/server/env';
 
 interface GenerateRequestBody {
 	projectId: string;
@@ -40,7 +41,9 @@ function modeToJobType(mode: MusicRequestMode): JobType {
 	}
 }
 
-export const POST: RequestHandler = async ({ request, locals, platform }) => {
+export const POST: RequestHandler = async (event) => {
+	const { request, locals } = event;
+	const env = getEnv(event);
 	// 1. Validate session (authenticated user OR temp session)
 	const userId = getEffectiveUserId(locals);
 	if (!userId) {
@@ -101,7 +104,7 @@ export const POST: RequestHandler = async ({ request, locals, platform }) => {
 	}
 
 	// 4. Set up DB and check quota
-	const dbUrl = process.env.DATABASE_URL ?? '';
+	const dbUrl = env.DATABASE_URL;
 	const db = dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
 
 	const limit = isTemp ? TEMP_SESSION_LIMIT : DAILY_LIMIT;
@@ -192,7 +195,7 @@ export const POST: RequestHandler = async ({ request, locals, platform }) => {
 	}
 
 	// 7. Enqueue job to Cloudflare Queue
-	const queue = platform?.env?.GENERATION_QUEUE;
+	const queue = env.GENERATION_QUEUE;
 	if (queue) {
 		await queue.send({
 			jobId: result.jobId,

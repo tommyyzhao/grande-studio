@@ -34,12 +34,18 @@ declare global {
 		// interface PageData {}
 		// interface PageState {}
 		interface Platform {
-			env: {
-				AUDIO_BUCKET: R2BucketLike;
-				GENERATION_QUEUE: QueueLike;
-				LIVE_KV: KVNamespaceLike;
+			env?: {
+				DATABASE_URL?: string;
+				MINIMAX_API_KEY?: string;
+				BETTER_AUTH_SECRET?: string;
+				BETTER_AUTH_URL?: string;
+				R2_SIGNING_SECRET?: string;
+				R2_BUCKET_NAME?: string;
+				AUDIO_BUCKET?: R2BucketLike;
+				LIVE_KV?: KVNamespaceLike;
+				GENERATION_QUEUE?: QueueLike;
 			};
-			context: {
+			context?: {
 				waitUntil(promise: Promise<unknown>): void;
 			};
 		}

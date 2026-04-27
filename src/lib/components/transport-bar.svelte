@@ -25,8 +25,10 @@
 		rafId = requestAnimationFrame(pollEngineState);
 	}
 
-	// Start polling on mount
-	rafId = requestAnimationFrame(pollEngineState);
+	// Start polling on mount (browser only)
+	if (typeof requestAnimationFrame !== 'undefined') {
+		rafId = requestAnimationFrame(pollEngineState);
+	}
 
 	onDestroy(() => {
 		if (rafId !== null) {
