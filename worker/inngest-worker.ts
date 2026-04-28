@@ -32,6 +32,7 @@ interface WorkerEnv {
 	DATABASE_URL?: string;
 	MINIMAX_API_KEY?: string;
 	R2_SIGNING_SECRET?: string;
+	EVENTS_TOKEN_SECRET?: string;
 	BETTER_AUTH_URL?: string;
 	INNGEST_EVENT_KEY?: string;
 	INNGEST_SIGNING_KEY?: string;
@@ -65,7 +66,7 @@ async function handleEvents(request: Request, env: WorkerEnv): Promise<Response>
 		});
 	}
 
-	const verified = await verifyEventsToken(token, env.R2_SIGNING_SECRET ?? '');
+	const verified = await verifyEventsToken(token, env.EVENTS_TOKEN_SECRET ?? '');
 	if (!verified) {
 		return new Response(JSON.stringify({ error: 'invalid or expired token' }), {
 			status: 401,

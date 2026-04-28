@@ -34,7 +34,7 @@ export const GET: RequestHandler = async (event) => {
 
 	const token = url.searchParams.get('token');
 	if (token) {
-		const verified = await verifyEventsToken(token, env.R2_SIGNING_SECRET ?? '');
+		const verified = await verifyEventsToken(token, env.EVENTS_TOKEN_SECRET);
 		if (verified) userId = verified.userId;
 	}
 

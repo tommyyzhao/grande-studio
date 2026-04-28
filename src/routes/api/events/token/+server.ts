@@ -24,7 +24,7 @@ export const GET: RequestHandler = async (event) => {
 		error(401, { message: 'Session required.' });
 	}
 
-	const secret = env.R2_SIGNING_SECRET ?? '';
+	const secret = env.EVENTS_TOKEN_SECRET;
 	if (!secret) {
 		error(500, { message: 'Events token signing is not configured.' });
 	}

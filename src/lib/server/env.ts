@@ -10,6 +10,10 @@ export interface AppEnv {
 	BETTER_AUTH_URL: string;
 	R2_SIGNING_SECRET: string;
 	R2_BUCKET_NAME: string;
+	// HMAC secret for short-lived /api/events tokens. Lives on both Pages
+	// (mints) and the standalone Worker (verifies); kept separate from
+	// R2_SIGNING_SECRET so audio URL signing can be rotated independently.
+	EVENTS_TOKEN_SECRET: string;
 	// Cloudflare R2 binding on production, local filesystem in dev
 	AUDIO_BUCKET: R2BucketLike;
 	LIVE_KV?: KVNamespaceLike;
@@ -38,6 +42,8 @@ export function getEnv(event: RequestEvent): AppEnv {
 		R2_SIGNING_SECRET:
 			(p.R2_SIGNING_SECRET as string) ?? process.env.R2_SIGNING_SECRET ?? '',
 		R2_BUCKET_NAME: (p.R2_BUCKET_NAME as string) ?? process.env.R2_BUCKET_NAME ?? '',
+		EVENTS_TOKEN_SECRET:
+			(p.EVENTS_TOKEN_SECRET as string) ?? process.env.EVENTS_TOKEN_SECRET ?? '',
 		AUDIO_BUCKET: isDev
 			? createLocalR2Bucket()
 			: ((p.AUDIO_BUCKET as R2BucketLike) ?? createLocalR2Bucket()),
