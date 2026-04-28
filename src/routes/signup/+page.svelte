@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { authClient } from '$lib/auth-client';
 	import { Button } from '$lib/components/ui/button';
 	import * as Card from '$lib/components/ui/card';
@@ -10,6 +11,19 @@
 	let confirmPassword = $state('');
 	let error = $state('');
 	let loading = $state(false);
+
+	// Pre-warm the BetterAuth handler so the user's submit lands on a hot
+	// function. See signin/+page.svelte for the same workaround.
+	onMount(() => {
+		fetch('/api/auth/get-session', { credentials: 'include' }).catch(() => {});
+	});
+
+	function isColdStartLike(err: unknown): boolean {
+		if (!err || typeof err !== 'object') return false;
+		const e = err as { status?: number; message?: string };
+		if (typeof e.status === 'number' && e.status >= 500) return true;
+		return e.status == null && !e.message;
+	}
 
 	let emailError = $derived.by(() => {
 		if (!email) return '';
@@ -47,10 +61,9 @@
 			authClient.signUp.email({ email, password, name: email.split('@')[0] });
 
 		let result = await submit();
-		// Pages Functions can 5xx on a cold start (BetterAuth handler hasn't
-		// warmed the Neon connection yet). One transparent retry usually
-		// rescues it without burdening the user with a misleading error.
-		if (result.error && (result.error.status ?? 0) >= 500) {
+		// Pages Functions can 5xx on a cold start. The BetterAuth client may
+		// surface that as an error with no status/message — see isColdStartLike.
+		if (result.error && isColdStartLike(result.error)) {
 			await new Promise((r) => setTimeout(r, 600));
 			result = await submit();
 		}
@@ -58,11 +71,9 @@
 		loading = false;
 
 		if (result.error) {
-			const status = result.error.status ?? 0;
-			error =
-				status >= 500
-					? 'The service is starting up — please try again in a moment.'
-					: (result.error.message ?? 'Sign-up failed. Please try again.');
+			error = isColdStartLike(result.error)
+				? 'The service is starting up — please try again in a moment.'
+				: (result.error.message ?? 'Sign-up failed. Please try again.');
 			return;
 		}
 

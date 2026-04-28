@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { Play, Pause, Square, Download, Loader2 } from 'lucide-svelte';
+	import { Play, Pause, Download, Loader2 } from 'lucide-svelte';
 	import { Button } from '$lib/components/ui/button';
 	import type { AudioEngine } from '$lib/audio-engine/engine';
 	import { arrangementStore } from '$lib/stores/arrangement.svelte';
@@ -57,8 +57,10 @@
 		await engine.pause();
 	}
 
-	function handleStop() {
-		engine.stop();
+	function handleSeek(e: Event) {
+		const target = e.currentTarget as HTMLInputElement;
+		const next = Number(target.value);
+		if (Number.isFinite(next)) engine.seek(next);
 	}
 
 	// ─── Rough mixdown export ───────────────────────────────────────────
@@ -114,7 +116,7 @@
 	}
 </script>
 
-<footer class="border-border flex items-center justify-between border-t px-4 py-2">
+<footer class="border-border flex items-center gap-3 border-t px-4 py-2">
 	<div class="flex items-center gap-1">
 		{#if isPlaying}
 			<Button variant="outline" size="icon-sm" onclick={handlePause} title="Pause">
@@ -125,15 +127,22 @@
 				<Play class="size-4" />
 			</Button>
 		{/if}
-		<Button variant="outline" size="icon-sm" onclick={handleStop} title="Stop">
-			<Square class="size-3.5" />
-		</Button>
 	</div>
 
-	<div class="text-muted-foreground flex items-center gap-2 font-mono text-xs">
-		<span>{formatTime(currentTime)}</span>
-		<span>/</span>
-		<span>{formatTime(arrangementLength)}</span>
+	<div class="flex flex-1 items-center gap-2 font-mono text-xs">
+		<span class="text-muted-foreground tabular-nums">{formatTime(currentTime)}</span>
+		<input
+			type="range"
+			min="0"
+			max={Math.max(arrangementLength, 0.01)}
+			step="0.01"
+			value={Math.min(currentTime, arrangementLength)}
+			oninput={handleSeek}
+			disabled={arrangementLength <= 0}
+			aria-label="Seek arrangement"
+			class="accent-primary h-1 flex-1 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+		/>
+		<span class="text-muted-foreground tabular-nums">{formatTime(arrangementLength)}</span>
 	</div>
 
 	<div class="flex items-center gap-2">

@@ -256,8 +256,8 @@
 	</div>
 
 	<!-- Title + Provider badge -->
-	<div class="flex items-start justify-between gap-2">
-		<div class="min-w-0 flex-1">
+	<div class="flex flex-wrap items-start justify-between gap-x-2 gap-y-1">
+		<div class="min-w-0 max-w-full flex-1 basis-full sm:basis-0">
 			{#if editingTitle}
 				<Input
 					class="h-7 text-sm font-semibold"
@@ -269,7 +269,7 @@
 				/>
 			{:else}
 				<button
-					class="text-foreground block truncate text-left text-sm font-semibold hover:underline"
+					class="text-foreground block w-full truncate text-left text-sm font-semibold hover:underline"
 					onclick={startEditingTitle}
 					title="Click to rename"
 				>
@@ -324,55 +324,33 @@
 		{/if}
 	</div>
 
-	<!-- Action buttons -->
+	<!-- Action buttons. Play and Add to arrangement are the primary
+	     actions; Variation, Cover, and Download collapse into the dropdown. -->
 	<div class="flex items-center gap-1">
 		<Button
 			variant="outline"
-			size="icon-sm"
+			size="sm"
 			onclick={handlePlayPreview}
 			title={isPreviewPlaying ? 'Pause preview' : 'Play preview'}
+			class="gap-1.5"
 		>
 			{#if isPreviewPlaying}
 				<Pause class="size-4" />
 			{:else}
 				<Play class="size-4" />
 			{/if}
+			<span class="text-xs">{isPreviewPlaying ? 'Pause' : 'Play'}</span>
 		</Button>
 
 		<Button
 			variant="outline"
-			size="icon-sm"
+			size="sm"
 			onclick={handleAddToArrangement}
 			title="Add to arrangement"
+			class="gap-1.5"
 		>
 			<ListPlus class="size-4" />
-		</Button>
-
-		<Button
-			variant="outline"
-			size="icon-sm"
-			onclick={handleCreateVariation}
-			title="Create variation"
-		>
-			<GitBranch class="size-4" />
-		</Button>
-
-		<Button
-			variant="outline"
-			size="icon-sm"
-			onclick={handleCoverRestyle}
-			title="Cover / Re-style"
-		>
-			<Disc3 class="size-4" />
-		</Button>
-
-		<Button
-			variant="outline"
-			size="icon-sm"
-			onclick={handleExport}
-			title="Download"
-		>
-			<Download class="size-4" />
+			<span class="text-xs">Add</span>
 		</Button>
 
 		<!-- More actions dropdown (also used by long-press on mobile) -->

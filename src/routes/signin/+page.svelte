@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { authClient } from '$lib/auth-client';
 	import { Button } from '$lib/components/ui/button';
 	import * as Card from '$lib/components/ui/card';
@@ -9,6 +10,14 @@
 	let password = $state('');
 	let error = $state('');
 	let loading = $state(false);
+
+	// Pre-warm the BetterAuth handler on Pages so the user's submit lands
+	// on a hot function. Cold-start 503s otherwise surface as a generic
+	// "Invalid email or password" because the BetterAuth client doesn't
+	// expose HTTP status on its error object.
+	onMount(() => {
+		fetch('/api/auth/get-session', { credentials: 'include' }).catch(() => {});
+	});
 
 	let emailError = $derived.by(() => {
 		if (!email) return '';
@@ -25,6 +34,16 @@
 		email.length > 0 && password.length >= 8 && !emailError && !passwordError
 	);
 
+	// Cold-start 503s on Pages reach the BetterAuth client without a parsed
+	// status (response body isn't JSON), so a missing status+message is the
+	// signature we retry on.
+	function isColdStartLike(err: unknown): boolean {
+		if (!err || typeof err !== 'object') return false;
+		const e = err as { status?: number; message?: string };
+		if (typeof e.status === 'number' && e.status >= 500) return true;
+		return e.status == null && !e.message;
+	}
+
 	async function handleSubmit(e: SubmitEvent) {
 		e.preventDefault();
 		if (!isValid) return;
@@ -35,9 +54,10 @@
 		const submit = () => authClient.signIn.email({ email, password });
 
 		let result = await submit();
-		// Pages Functions can 5xx on a cold start. One transparent retry
-		// usually rescues it without showing a misleading "Invalid credentials".
-		if (result.error && (result.error.status ?? 0) >= 500) {
+		// Pages Functions can 5xx on a cold start. BetterAuth's client error
+		// object doesn't expose .status on a 503 — the cold-start signature is
+		// "no status AND no message". Retry on that, plus any explicit 5xx.
+		if (result.error && isColdStartLike(result.error)) {
 			await new Promise((r) => setTimeout(r, 600));
 			result = await submit();
 		}
@@ -45,11 +65,9 @@
 		loading = false;
 
 		if (result.error) {
-			const status = result.error.status ?? 0;
-			error =
-				status >= 500
-					? 'The service is starting up — please try again in a moment.'
-					: (result.error.message ?? 'Invalid email or password.');
+			error = isColdStartLike(result.error)
+				? 'The service is starting up — please try again in a moment.'
+				: (result.error.message ?? 'Invalid email or password.');
 			return;
 		}
 

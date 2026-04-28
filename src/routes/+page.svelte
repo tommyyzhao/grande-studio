@@ -4,6 +4,7 @@
 	import { authClient } from '$lib/auth-client';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
+	import { ListPlus, Pencil } from 'lucide-svelte';
 	import GeneratePanel from '$lib/components/generate-panel.svelte';
 	import TransportBar from '$lib/components/transport-bar.svelte';
 	import BlockList from '$lib/components/block-list.svelte';
@@ -375,11 +376,12 @@
 				/>
 			{:else if data.project && !isTemp}
 				<button
-					class="text-foreground text-sm font-semibold hover:underline"
+					class="text-foreground group inline-flex items-center gap-1.5 text-sm font-semibold hover:underline"
 					onclick={startEditingTitle}
 					title="Click to rename"
 				>
-					{data.project.title}
+					<span>{data.project.title}</span>
+					<Pencil class="text-muted-foreground group-hover:text-foreground size-3.5 transition-colors" aria-hidden="true" />
 				</button>
 			{:else}
 				<span class="text-foreground text-sm font-semibold">
@@ -400,11 +402,11 @@
 
 			<!-- Sign out / Sign in -->
 			{#if data.user}
-				<Button variant="ghost" size="sm" disabled={signingOut} onclick={handleSignOut}>
+				<Button variant="outline" size="sm" disabled={signingOut} onclick={handleSignOut}>
 					{signingOut ? 'Signing out...' : 'Sign out'}
 				</Button>
 			{:else}
-				<Button variant="ghost" size="sm" onclick={() => goto('/signin')}>
+				<Button variant="outline" size="sm" onclick={() => goto('/signin')}>
 					Sign in
 				</Button>
 			{/if}
@@ -458,9 +460,19 @@
 			<section class="flex-1 px-4 py-4">
 				<div class="flex flex-col gap-3">
 					{#if arrangementStore.clipCount === 0}
-						<p class="text-muted-foreground py-8 text-center text-sm">
-							No clips in arrangement. Use the <strong>+</strong> button on a ready block to add it here.
-						</p>
+						<div class="text-muted-foreground flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed py-10 text-center">
+							<div class="bg-primary/10 text-primary flex size-10 items-center justify-center rounded-full">
+								<ListPlus class="size-5" aria-hidden="true" />
+							</div>
+							<p class="text-sm font-medium">No clips in arrangement</p>
+							<p class="inline-flex flex-wrap items-center justify-center gap-1 text-xs">
+								Click
+								<span class="bg-muted text-foreground inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px]">
+									<ListPlus class="size-3" /> Add
+								</span>
+								on a ready block to add it here.
+							</p>
+						</div>
 					{:else}
 						{#each arrangementStore.clips as clip, i (clip.clipId)}
 							<ArrangementClipCard

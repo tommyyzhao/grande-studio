@@ -391,11 +391,13 @@
 		</div>
 	{/if}
 
-	<!-- ═══ Mode Toggle ═══ -->
-	<div class="flex gap-1 rounded-lg border p-0.5">
+	<!-- ═══ Mode Toggle (segmented control) ═══ -->
+	<div class="bg-muted/40 inline-flex w-fit gap-0.5 rounded-md border p-0.5" role="tablist" aria-label="Generation mode">
 		<button
 			type="button"
-			class="flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors {panelMode === 'generate' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}"
+			role="tab"
+			aria-selected={panelMode === 'generate'}
+			class="rounded px-3 py-1 text-xs font-medium transition-all {panelMode === 'generate' ? 'bg-background text-foreground shadow-sm ring-1 ring-black/5' : 'text-muted-foreground hover:text-foreground'}"
 			onclick={() => { panelMode = 'generate'; errorMessage = ''; }}
 			disabled={submitting}
 		>
@@ -403,7 +405,9 @@
 		</button>
 		<button
 			type="button"
-			class="flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors {panelMode === 'cover_restyle' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}"
+			role="tab"
+			aria-selected={panelMode === 'cover_restyle'}
+			class="rounded px-3 py-1 text-xs font-medium transition-all {panelMode === 'cover_restyle' ? 'bg-background text-foreground shadow-sm ring-1 ring-black/5' : 'text-muted-foreground hover:text-foreground'}"
 			onclick={() => { panelMode = 'cover_restyle'; errorMessage = ''; }}
 			disabled={submitting}
 		>
@@ -469,19 +473,28 @@
 					</button>
 				</div>
 			{:else}
-				<!-- File input -->
-				<input
-					id="source-upload"
-					type="file"
-					accept={ACCEPTED_FORMATS}
-					onchange={handleFileSelect}
-					bind:this={fileInputRef}
-					disabled={submitting || uploading}
-					class="text-muted-foreground file:bg-muted file:text-foreground file:hover:bg-muted/80 block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:px-3 file:py-1.5 file:text-sm file:font-medium file:transition-colors"
-				/>
-				<p class="text-muted-foreground text-xs">
-					Accepted formats: MP3, WAV, M4A, FLAC (max 50MB)
-				</p>
+				<!-- File input — styled drop zone -->
+				<label
+					for="source-upload"
+					class="border-border hover:border-primary/60 hover:bg-muted/40 flex cursor-pointer flex-col items-center justify-center gap-1 rounded-md border-2 border-dashed bg-transparent px-4 py-6 text-center transition-colors {submitting || uploading ? 'pointer-events-none opacity-60' : ''}"
+				>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted-foreground size-5" aria-hidden="true">
+						<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+						<polyline points="17 8 12 3 7 8" />
+						<line x1="12" y1="3" x2="12" y2="15" />
+					</svg>
+					<span class="text-foreground text-sm font-medium">Click to upload an audio file</span>
+					<span class="text-muted-foreground text-xs">MP3, WAV, M4A, or FLAC · max 50 MB</span>
+					<input
+						id="source-upload"
+						type="file"
+						accept={ACCEPTED_FORMATS}
+						onchange={handleFileSelect}
+						bind:this={fileInputRef}
+						disabled={submitting || uploading}
+						class="sr-only"
+					/>
+				</label>
 			{/if}
 
 			<!-- Upload progress -->
@@ -505,15 +518,17 @@
 
 	<!-- ═══ Instrumental toggle (Generate mode only) ═══ -->
 	{#if panelMode === 'generate'}
-		<div class="flex items-center gap-2">
+		<div class="flex items-center gap-3">
 			<Switch
 				id="instrumental-toggle"
 				bind:checked={instrumental}
 				disabled={submitting}
-				size="sm"
 			/>
 			<Label for="instrumental-toggle" class="cursor-pointer text-sm font-medium">
-				Instrumental only
+				Instrumental only —
+				<span class={instrumental ? 'text-primary font-semibold' : 'text-muted-foreground font-semibold'}>
+					{instrumental ? 'ON' : 'OFF'}
+				</span>
 			</Label>
 		</div>
 	{/if}
@@ -539,16 +554,18 @@
 				class="min-h-24 resize-y font-mono text-sm"
 				rows={4}
 			/>
-			<!-- Structure tag palette -->
-			<div class="flex flex-col gap-1.5">
-				<span class="text-muted-foreground text-xs">Insert structure tag</span>
+			<!-- Structure tag palette: visually nested under the lyrics
+			     textarea so the relationship reads as "click to insert". -->
+			<div class="border-border bg-muted/30 -mt-1 flex flex-col gap-1.5 rounded-b-md border border-t-0 px-2 py-1.5">
+				<span class="text-muted-foreground text-[11px]">Click to insert into lyrics</span>
 				<div class="flex flex-wrap gap-1">
 					{#each SUPPORTED_STRUCTURE_TAGS as tag}
 						<button
 							type="button"
-							class="bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground rounded-md border px-2 py-0.5 text-xs font-mono transition-colors disabled:opacity-50"
+							class="bg-background hover:bg-primary/10 hover:text-foreground hover:border-primary/40 text-muted-foreground rounded-md border px-2 py-0.5 font-mono text-xs transition-colors disabled:opacity-50"
 							disabled={submitting}
 							onclick={() => insertTag(tag)}
+							title="Insert {tag} into lyrics"
 						>
 							{tag}
 						</button>

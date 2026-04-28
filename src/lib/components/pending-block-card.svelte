@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Loader2, X, RefreshCw, Radio } from 'lucide-svelte';
+	import { Loader2, X, RefreshCw } from 'lucide-svelte';
 	import { Button } from '$lib/components/ui/button';
 	import type { BlockAsset } from '$lib/types';
 
@@ -41,8 +41,8 @@
 			badgeClass: 'bg-muted text-muted-foreground'
 		},
 		receiving_audio: {
-			label: 'Live',
-			showSpinner: false,
+			label: 'Streaming…',
+			showSpinner: true,
 			cardClass: 'ring-blue-500/40 bg-blue-500/5 dark:bg-blue-500/10',
 			badgeClass: 'bg-blue-500/20 text-blue-700 dark:text-blue-300'
 		},
@@ -148,9 +148,6 @@
 		<span
 			class="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium {config.badgeClass}"
 		>
-			{#if asset.status === 'receiving_audio' && isLive}
-				<Radio class="size-3" />
-			{/if}
 			{config.label}
 		</span>
 	</div>

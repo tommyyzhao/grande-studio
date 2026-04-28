@@ -168,9 +168,18 @@
 
 <div class="flex flex-col gap-3">
 	{#if displayAssets.length === 0}
-		<p class="text-muted-foreground py-8 text-center text-sm">
-			No blocks yet. Generate your first track above.
-		</p>
+		<div class="text-muted-foreground flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed py-10 text-center">
+			<div class="bg-primary/10 text-primary flex size-10 items-center justify-center rounded-full">
+				<!-- music note glyph -->
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-5" aria-hidden="true">
+					<path d="M9 18V5l12-2v13" />
+					<circle cx="6" cy="18" r="3" />
+					<circle cx="18" cy="16" r="3" />
+				</svg>
+			</div>
+			<p class="text-sm font-medium">No blocks yet</p>
+			<p class="text-xs">Use the prompt above to generate your first track.</p>
+		</div>
 	{:else}
 		{#each displayAssets as asset (asset.id)}
 			{@const parentAssetId = parentEdges?.get(asset.id) ?? null}

@@ -5,6 +5,7 @@ import { withRLS } from '$lib/server/db/rls';
 import { validateJobTransition } from '$lib/services/job-status';
 import { validateAssetTransition } from '$lib/services/asset-status';
 import { buildObjectKey } from '$lib/services/r2-storage';
+import { estimateMp3DurationSec } from '$lib/server/audio/mp3-duration';
 import { ProviderError } from '$lib/providers/types';
 import type { ProviderAudioChunk, ProviderGenerationHandle } from '$lib/providers/types';
 import type { GenerationQueueMessage, WorkflowDeps, WorkflowResult } from './types';
@@ -470,7 +471,7 @@ export async function runGenerationWorkflow(
 	// Audio format is always MP3 from MiniMax (verified via integration test)
 	const format = 'mp3';
 	const sampleRate: number | null = 44100;
-	const durationSec: number | null = null; // Duration can be detected client-side from the audio buffer
+	const durationSec: number | null = estimateMp3DurationSec(audioBytes);
 
 	const r2ObjectKey = buildObjectKey(ownerId, message.projectId, assetId, format);
 
