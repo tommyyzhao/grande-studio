@@ -1,22 +1,27 @@
 /**
- * Standalone Cloudflare Worker that serves /api/inngest.
+ * Standalone Cloudflare Worker that hosts long-running endpoints.
  *
- * Why this exists: Cloudflare Pages Functions silently ignore
- * `[limits] cpu_ms` from wrangler config and cap execution around ~30s CPU /
- * ~3 min wall, which is below the 1-3 min held connection MiniMax music
- * generation needs. Standalone Workers on the Paid plan honor the limits
- * setting up to 300_000 ms (5 min) of CPU time, so the long-running Inngest
- * function lives here instead of the Pages project. Pages still serves the
- * SvelteKit app; only the Inngest webhook is split out.
+ * Cloudflare Pages Functions silently kill requests that hold a connection
+ * past ~30s CPU / ~3 min wall, which is below both what MiniMax music
+ * generation needs (1-3 min) and what the SSE status stream needs (open
+ * indefinitely). Standalone Workers on the Paid plan honor
+ * `[limits] cpu_ms = 300000`, so both endpoints live here.
  *
- * Inngest cloud's app URL is pointed at this worker's `/api/inngest`. The
- * SvelteKit app continues to send events via `inngest.send()` (HTTP to
- * inngest.com), so `/api/generate` does not depend on this worker being up.
+ * Routes:
+ *   POST /api/inngest   — Inngest webhook (generation + quota cron)
+ *   GET  /api/events    — SSE status stream (token-authed; cookie can't
+ *                         cross from grande-studio.pages.dev)
+ *
+ * Pages keeps serving the SvelteKit app, audio fetch, and the cookie-authed
+ * /api/events/token mint endpoint.
  */
 import { serve } from 'inngest/cloudflare';
 import { inngest } from '../src/lib/server/inngest/client';
 import { generationFunction, quotaExpiryFunction } from '../src/lib/server/inngest/functions';
 import { inngestEnvContext } from '../src/lib/server/inngest/context';
+import { createNeonDb, createLocalDb } from '../src/lib/server/db';
+import { buildEventStream } from '../src/lib/server/events/event-stream';
+import { verifyEventsToken } from '../src/lib/services/events-token';
 import type { WorkflowEnv } from '../src/lib/server/workflow/types';
 import type { R2BucketLike } from '../src/lib/services/r2-storage';
 import type { KVNamespaceLike } from '../src/lib/services/live-chunks';
@@ -31,6 +36,8 @@ interface WorkerEnv {
 	INNGEST_EVENT_KEY?: string;
 	INNGEST_SIGNING_KEY?: string;
 }
+
+const ALLOWED_ORIGIN = 'https://grande-studio.pages.dev';
 
 const inngestHandler = serve({
 	client: inngest,
@@ -48,21 +55,62 @@ function buildWorkflowEnv(env: WorkerEnv): WorkflowEnv {
 	};
 }
 
+async function handleEvents(request: Request, env: WorkerEnv): Promise<Response> {
+	const url = new URL(request.url);
+	const token = url.searchParams.get('token');
+	if (!token) {
+		return new Response(JSON.stringify({ error: 'token required' }), {
+			status: 401,
+			headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': ALLOWED_ORIGIN }
+		});
+	}
+
+	const verified = await verifyEventsToken(token, env.R2_SIGNING_SECRET ?? '');
+	if (!verified) {
+		return new Response(JSON.stringify({ error: 'invalid or expired token' }), {
+			status: 401,
+			headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': ALLOWED_ORIGIN }
+		});
+	}
+
+	const dbUrl = env.DATABASE_URL ?? '';
+	const db = dbUrl.includes('neon.tech') ? createNeonDb(dbUrl) : createLocalDb(dbUrl);
+
+	const stream = buildEventStream({
+		db,
+		userId: verified.userId,
+		liveKv: env.LIVE_KV,
+		signal: request.signal
+	});
+
+	return new Response(stream, {
+		headers: {
+			'Content-Type': 'text/event-stream',
+			'Cache-Control': 'no-cache',
+			Connection: 'keep-alive',
+			'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
+			'X-Accel-Buffering': 'no'
+		}
+	});
+}
+
 export default {
 	async fetch(request: Request, env: WorkerEnv): Promise<Response> {
 		const url = new URL(request.url);
-		const isInngestRoute =
-			url.pathname === '/api/inngest' || url.pathname.startsWith('/api/inngest/');
 
-		if (!isInngestRoute) {
-			return new Response('grande-studio inngest worker', {
-				status: 200,
-				headers: { 'content-type': 'text/plain' }
-			});
+		if (url.pathname === '/api/inngest' || url.pathname.startsWith('/api/inngest/')) {
+			return inngestEnvContext.run(buildWorkflowEnv(env), () =>
+				inngestHandler(request, env as Record<string, string | undefined>)
+			);
 		}
 
-		return inngestEnvContext.run(buildWorkflowEnv(env), () =>
-			inngestHandler(request, env as Record<string, string | undefined>)
-		);
+		if (url.pathname === '/api/events') {
+			return handleEvents(request, env);
+		}
+
+		return new Response('grande-studio inngest worker', {
+			status: 200,
+			headers: { 'content-type': 'text/plain' }
+		});
 	}
 };

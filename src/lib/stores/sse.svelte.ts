@@ -135,7 +135,7 @@ export function createSSEStore() {
 		retryMs = Math.min(retryMs * BACKOFF_MULTIPLIER, MAX_RETRY_MS);
 	}
 
-	function doConnect() {
+	async function doConnect() {
 		// Browser-only guard: Cloudflare Workers also expose EventSource as a
 		// global, but constructing one with a relative URL in SSR throws
 		// "Cannot open an EventSource ... The URL is invalid". The real check is
@@ -149,7 +149,27 @@ export function createSSEStore() {
 			eventSource = null;
 		}
 
-		eventSource = new EventSource('/api/events');
+		// Mint a token + url. In production the URL points at the standalone
+		// Worker (cookie-cross-site can't reach it); in dev it's relative to
+		// Pages. Either way we attach the token in the query string.
+		let connectUrl: string;
+		try {
+			const res = await fetch('/api/events/token', { credentials: 'include' });
+			if (!res.ok) {
+				if (intentionalClose) return;
+				scheduleReconnect();
+				return;
+			}
+			const body = (await res.json()) as { url: string };
+			connectUrl = body.url;
+		} catch {
+			if (intentionalClose) return;
+			scheduleReconnect();
+			return;
+		}
+
+		if (intentionalClose) return;
+		eventSource = new EventSource(connectUrl);
 
 		eventSource.addEventListener('open', () => {
 			connected = true;
