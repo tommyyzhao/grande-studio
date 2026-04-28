@@ -35,17 +35,23 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Both `main` and `ralph/v1-minimax-web-studio` deploy to production
+      # (`--branch main`) because the working branch effectively *is* the
+      # production source of truth right now — the long-running MiniMax
+      # work has not been merged back to main. Without --branch main here,
+      # ralph pushes only refresh the preview alias and prod stays stale,
+      # which is what bit us during the SSE-on-Worker spike.
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy .svelte-kit/cloudflare --project-name grande-studio --branch ${{ github.ref_name }} --commit-dirty=true
+          command: pages deploy .svelte-kit/cloudflare --project-name grande-studio --branch main --commit-dirty=true
 
-      # Standalone Worker that hosts /api/inngest. Runs the long-running
-      # MiniMax generation function — Pages Functions kill it at ~180s.
+      # Standalone Worker that hosts /api/inngest and /api/events.
+      # Pages Functions kill long-running requests; the Worker honors
+      # [limits] cpu_ms = 300000 on the Workers Paid plan.
       - name: Deploy Inngest Worker
-        if: github.ref_name == 'main'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -56,6 +62,5 @@ jobs:
       # /api/inngest +server.ts is kept for local dev but is not what Inngest
       # cloud talks to in production.
       - name: Sync Inngest manifest
-        if: github.ref_name == 'main'
         run: |
           curl --fail -sS -X PUT https://grande-studio-inngest.tzpersonal.workers.dev/api/inngest

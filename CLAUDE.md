@@ -103,14 +103,19 @@ non-obvious findings.** This is the handoff channel between sessions.
 - **Inngest cloud needs a one-time sync per deploy** (`curl -X PUT
   https://<host>/api/inngest`). Without it the dashboard never learns
   the function manifest and events sit unprocessed.
-- **`/api/inngest` runs on a standalone Worker, not Pages** in production.
-  Pages Functions silently kill long-running requests around 180 s wall
-  with `outcome=exceededCpu`, which is below the 1-3 min MiniMax
-  generation needs. The Worker (`grande-studio-inngest`) is configured
-  via `wrangler.worker.toml` and respects `[limits] cpu_ms`. The Pages
-  `/api/inngest/+server.ts` is kept for local dev only; Inngest cloud's
-  app URL is `https://grande-studio-inngest.tzpersonal.workers.dev/api/inngest`.
-  CI deploys both and syncs the Worker URL.
+- **`/api/inngest` and `/api/events` both run on the standalone Worker**
+  in production, not Pages. Pages Functions silently kill long-running
+  requests around 180 s wall with `outcome=exceededCpu`, which is below
+  the 1-3 min MiniMax generation needs and far below SSE's
+  open-indefinitely model. The Worker (`grande-studio-inngest`) is
+  configured via `wrangler.worker.toml` and respects `[limits] cpu_ms`.
+  The Pages `+server.ts` files for both routes are kept for local dev
+  only and 410 in production. Inngest cloud's app URL is
+  `https://grande-studio-inngest.tzpersonal.workers.dev/api/inngest`;
+  the SSE URL is the same host's `/api/events` (cookies can't cross
+  from `grande-studio.pages.dev`, so the client mints a short-lived
+  HMAC token via `/api/events/token` on Pages first). CI deploys both
+  and syncs the Worker URL.
 
 ## Production deploy quickref
 
@@ -132,8 +137,14 @@ via `wrangler secret put NAME --config wrangler.worker.toml` (or
 
 ```
 DATABASE_URL          MINIMAX_API_KEY      R2_SIGNING_SECRET
-INNGEST_EVENT_KEY     INNGEST_SIGNING_KEY
+INNGEST_EVENT_KEY     INNGEST_SIGNING_KEY  EVENTS_TOKEN_SECRET
 ```
+
+`EVENTS_TOKEN_SECRET` must be **identical** on Pages and Worker — Pages
+mints `/api/events` access tokens with it and the Worker verifies them.
+Provision both with the same value (one `wrangler pages secret put` and
+one `wrangler secret put --config wrangler.worker.toml`). Keep it
+distinct from `R2_SIGNING_SECRET` so audio URL signing rotates separately.
 
 `BETTER_AUTH_URL` lives as a non-secret `[vars]` entry in
 `wrangler.worker.toml`. R2 bucket and KV namespace bindings point at the
