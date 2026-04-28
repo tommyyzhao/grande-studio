@@ -6,11 +6,12 @@ import type { WorkflowEnv } from './types';
 
 /**
  * Generation rows older than this in `generating` / `receiving_audio` /
- * `persisting` are considered stuck (worker died mid-execution, e.g. exceeded
- * CF Workers wall-time). The cron flips them to `failed` so the UI can show a
- * retry affordance and quota gets released.
+ * `persisting` are considered stuck. With the standalone Worker hosting
+ * `/api/inngest`, MiniMax generation reliably completes inside ~3 minutes
+ * (worst-case observed). 5 minutes leaves a comfortable margin while
+ * cutting recovery time in half from the previous 10 minutes.
  */
-const STUCK_THRESHOLD_MINUTES = 10;
+const STUCK_THRESHOLD_MINUTES = 5;
 
 /**
  * Cloudflare Cron Trigger handler.

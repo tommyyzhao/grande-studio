@@ -43,16 +43,26 @@
 		error = '';
 		loading = true;
 
-		const result = await authClient.signUp.email({
-			email,
-			password,
-			name: email.split('@')[0]
-		});
+		const submit = () =>
+			authClient.signUp.email({ email, password, name: email.split('@')[0] });
+
+		let result = await submit();
+		// Pages Functions can 5xx on a cold start (BetterAuth handler hasn't
+		// warmed the Neon connection yet). One transparent retry usually
+		// rescues it without burdening the user with a misleading error.
+		if (result.error && (result.error.status ?? 0) >= 500) {
+			await new Promise((r) => setTimeout(r, 600));
+			result = await submit();
+		}
 
 		loading = false;
 
 		if (result.error) {
-			error = result.error.message ?? 'Sign-up failed. Please try again.';
+			const status = result.error.status ?? 0;
+			error =
+				status >= 500
+					? 'The service is starting up — please try again in a moment.'
+					: (result.error.message ?? 'Sign-up failed. Please try again.');
 			return;
 		}
 

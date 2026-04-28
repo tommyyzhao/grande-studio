@@ -32,15 +32,24 @@
 		error = '';
 		loading = true;
 
-		const result = await authClient.signIn.email({
-			email,
-			password
-		});
+		const submit = () => authClient.signIn.email({ email, password });
+
+		let result = await submit();
+		// Pages Functions can 5xx on a cold start. One transparent retry
+		// usually rescues it without showing a misleading "Invalid credentials".
+		if (result.error && (result.error.status ?? 0) >= 500) {
+			await new Promise((r) => setTimeout(r, 600));
+			result = await submit();
+		}
 
 		loading = false;
 
 		if (result.error) {
-			error = result.error.message ?? 'Invalid email or password.';
+			const status = result.error.status ?? 0;
+			error =
+				status >= 500
+					? 'The service is starting up — please try again in a moment.'
+					: (result.error.message ?? 'Invalid email or password.');
 			return;
 		}
 

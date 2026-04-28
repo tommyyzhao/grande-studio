@@ -14,6 +14,26 @@ const handler = serve({
 	functions: [generationFunction, quotaExpiryFunction]
 });
 
+/** Production routes Inngest traffic to the standalone Worker; only local
+ * dev (INNGEST_DEV=1) actually services /api/inngest from Pages. Returning
+ * 410 to anything else prevents an accidental sync from re-registering
+ * Pages as the active app URL — that footgun would silently break
+ * generation again because Pages Functions kill the long-running stream. */
+function goneResponse(): Response {
+	return new Response(
+		JSON.stringify({
+			error: 'gone',
+			message:
+				'/api/inngest in production is served by the standalone Worker at https://grande-studio-inngest.tzpersonal.workers.dev/api/inngest'
+		}),
+		{ status: 410, headers: { 'Content-Type': 'application/json' } }
+	);
+}
+
+function isDev(): boolean {
+	return privateEnv.INNGEST_DEV === '1' || process.env.INNGEST_DEV === '1';
+}
+
 /** Build per-request WorkflowEnv from platform bindings + private env. */
 function buildEnv(platform: App.Platform | undefined): WorkflowEnv {
 	const isDev = privateEnv.INNGEST_DEV === '1' || process.env.INNGEST_DEV === '1';
@@ -35,8 +55,14 @@ function buildEnv(platform: App.Platform | undefined): WorkflowEnv {
 }
 
 export const GET: RequestHandler = (event) =>
-	inngestEnvContext.run(buildEnv(event.platform), () => handler.GET(event));
+	isDev()
+		? inngestEnvContext.run(buildEnv(event.platform), () => handler.GET(event))
+		: goneResponse();
 export const POST: RequestHandler = (event) =>
-	inngestEnvContext.run(buildEnv(event.platform), () => handler.POST(event));
+	isDev()
+		? inngestEnvContext.run(buildEnv(event.platform), () => handler.POST(event))
+		: goneResponse();
 export const PUT: RequestHandler = (event) =>
-	inngestEnvContext.run(buildEnv(event.platform), () => handler.PUT(event));
+	isDev()
+		? inngestEnvContext.run(buildEnv(event.platform), () => handler.PUT(event))
+		: goneResponse();
