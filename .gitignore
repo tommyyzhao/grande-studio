@@ -27,3 +27,7 @@ vite.config.ts.timestamp-*
 
 # Playwright MCP artifacts (snapshots, console logs)
 .playwright-mcp
+
+# Claude harness scratch
+.claude/scheduled_tasks.lock
+.wrangler-worker-build

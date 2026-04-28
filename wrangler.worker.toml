@@ -1,0 +1,39 @@
+# Standalone Cloudflare Worker for /api/inngest.
+# Separate from wrangler.jsonc (which configures the Pages project) so the
+# Inngest webhook gets its own runtime with a 5-minute CPU budget. See
+# worker/inngest-worker.ts for rationale.
+
+name = "grande-studio-inngest"
+main = "worker/inngest-worker.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+tsconfig = "tsconfig.json"
+
+# Non-secret vars. Same value as the BETTER_AUTH_URL secret on the Pages
+# project — used by the workflow when constructing absolute audio URLs.
+[vars]
+BETTER_AUTH_URL = "https://grande-studio.pages.dev"
+
+# 5-minute CPU budget — the whole point of this worker. Default Workers Paid
+# is 30s, which is below the 1-3 min MiniMax generation needs.
+[limits]
+cpu_ms = 300000
+
+# Same R2 bucket Pages writes generated audio into, so the worker can persist
+# finished assets where /api/audio/serve (on Pages) can find them.
+[[r2_buckets]]
+binding = "AUDIO_BUCKET"
+bucket_name = "grande-studio-audio"
+
+# Same KV used for live chunk publishing; Pages reads from it for SSE preview.
+[[kv_namespaces]]
+binding = "LIVE_KV"
+id = "42abaef07d9e4490ac8368639128e3d0"
+
+# No [triggers.crons] needed: the quota-expiry cron is an Inngest function,
+# scheduled by Inngest cloud itself and delivered via POST /api/inngest. It
+# does not depend on a Cloudflare Cron Trigger.
+
+# Observability so we can see exceededCpu / wall-time outcomes during the spike.
+[observability]
+enabled = true

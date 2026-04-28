@@ -103,6 +103,14 @@ non-obvious findings.** This is the handoff channel between sessions.
 - **Inngest cloud needs a one-time sync per deploy** (`curl -X PUT
   https://<host>/api/inngest`). Without it the dashboard never learns
   the function manifest and events sit unprocessed.
+- **`/api/inngest` runs on a standalone Worker, not Pages** in production.
+  Pages Functions silently kill long-running requests around 180 s wall
+  with `outcome=exceededCpu`, which is below the 1-3 min MiniMax
+  generation needs. The Worker (`grande-studio-inngest`) is configured
+  via `wrangler.worker.toml` and respects `[limits] cpu_ms`. The Pages
+  `/api/inngest/+server.ts` is kept for local dev only; Inngest cloud's
+  app URL is `https://grande-studio-inngest.tzpersonal.workers.dev/api/inngest`.
+  CI deploys both and syncs the Worker URL.
 
 ## Production deploy quickref
 
@@ -117,15 +125,31 @@ BETTER_AUTH_URL       R2_BUCKET_NAME        R2_SIGNING_SECRET
 INNGEST_EVENT_KEY     INNGEST_SIGNING_KEY
 ```
 
-Deploy:
+The standalone Inngest Worker (`grande-studio-inngest`) is configured by
+`wrangler.worker.toml`; its secrets are independent of Pages and are set
+via `wrangler secret put NAME --config wrangler.worker.toml` (or
+`wrangler secret bulk file.json --config wrangler.worker.toml`):
+
+```
+DATABASE_URL          MINIMAX_API_KEY      R2_SIGNING_SECRET
+INNGEST_EVENT_KEY     INNGEST_SIGNING_KEY
+```
+
+`BETTER_AUTH_URL` lives as a non-secret `[vars]` entry in
+`wrangler.worker.toml`. R2 bucket and KV namespace bindings point at the
+same resources Pages uses.
+
+Deploy (CI does this on push to main; commands below for ad-hoc runs):
 
 ```bash
 npm run build
 npx wrangler pages deploy .svelte-kit/cloudflare --project-name grande-studio --branch main --commit-dirty=true
-curl -X PUT https://grande-studio.pages.dev/api/inngest   # sync Inngest manifest
+npx wrangler deploy --config wrangler.worker.toml                          # standalone Inngest Worker
+curl -X PUT https://grande-studio-inngest.tzpersonal.workers.dev/api/inngest   # sync at WORKER URL
 ```
 
-Live at https://grande-studio.pages.dev. Neon prod DB:
+Live at https://grande-studio.pages.dev. Inngest Worker at
+https://grande-studio-inngest.tzpersonal.workers.dev. Neon prod DB:
 `empty-wind-58284971` in org `tommy@meshi.io` (region `aws-us-west-2`).
 
 ## Layout
@@ -142,9 +166,13 @@ src/
       workflow/            generation-workflow.ts is the MiniMax driver
       db/                  drizzle schema + migrations
     providers/minimax/     SSE + JSON adapter
+worker/
+  inngest-worker.ts        standalone CF Worker entrypoint for /api/inngest
 drizzle/                   generated migrations
 memory/episodic/           session logs (read latest first)
 .claude/skills/            tech-specific reference docs
+wrangler.jsonc             Pages project config
+wrangler.worker.toml       standalone Inngest Worker config
 ```
 
 ## Branch & deploy

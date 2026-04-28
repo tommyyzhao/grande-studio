@@ -42,7 +42,20 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy .svelte-kit/cloudflare --project-name grande-studio --branch ${{ github.ref_name }} --commit-dirty=true
 
+      # Standalone Worker that hosts /api/inngest. Runs the long-running
+      # MiniMax generation function — Pages Functions kill it at ~180s.
+      - name: Deploy Inngest Worker
+        if: github.ref_name == 'main'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --config wrangler.worker.toml
+
+      # Sync the function manifest at the WORKER URL — not Pages. The Pages
+      # /api/inngest +server.ts is kept for local dev but is not what Inngest
+      # cloud talks to in production.
       - name: Sync Inngest manifest
         if: github.ref_name == 'main'
         run: |
-          curl --fail -sS -X PUT https://grande-studio.pages.dev/api/inngest
+          curl --fail -sS -X PUT https://grande-studio-inngest.tzpersonal.workers.dev/api/inngest
